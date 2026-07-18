@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">NosNode Seer mark</title>
+  <desc id="desc">A faceted validator orb and vertical seer aperture protected by a diamond watchtower frame.</desc>
+  <g fill="none" stroke-linecap="square" stroke-linejoin="bevel">
+    <path d="M256 42 L458 246 L256 474 L54 246 Z" stroke="#091129" stroke-width="48"/>
+    <path d="M256 48 L450 246" stroke="#58D5E8" stroke-width="17"/>
+    <path d="M450 246 L256 466 L62 246" stroke="#795CFF" stroke-width="17"/>
+    <path d="M62 246 L256 48" stroke="#B7A7FF" stroke-width="17"/>
+  </g>
+  <path d="M206 366 H306 L327 431 H185 Z" fill="#091129"/>
+  <circle cx="256" cy="246" r="102" fill="#11183D" stroke="#58D5E8" stroke-width="17"/>
+  <circle cx="256" cy="246" r="61" fill="#795CFF"/>
+  <path d="M256 165 L281 246 L256 327 L231 246 Z" fill="#F1F4FF"/>
+  <circle cx="256" cy="246" r="12" fill="#58D5E8"/>
+  <path d="M256 17 L265 34 L282 43 L265 52 L256 69 L247 52 L230 43 L247 34 Z" fill="#F1F4FF"/>
+</svg>
