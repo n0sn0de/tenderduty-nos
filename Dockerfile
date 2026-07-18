@@ -1,37 +1,46 @@
-# 1st stage, build app
-FROM golang:1.19 as builder
-RUN apt-get update && apt-get -y upgrade && apt-get install -y upx
-COPY . /build/app
-WORKDIR /build/app
+# syntax=docker/dockerfile:1
 
-RUN go get ./... && go build -ldflags "-s -w" -trimpath -o tenderduty main.go
-RUN upx tenderduty && upx -t tenderduty
+# Go 1.26.5 (bookworm), pinned to the official multi-platform image index.
+FROM docker.io/library/golang:1.26.5-bookworm@sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c AS build
 
-# 2nd stage, create a user to copy, and install libraries needed if connecting to upstream TLS server
-# we don't want the /lib and /lib64 from the go container cause it has more than we need.
-FROM debian:11 AS ssl
-ENV DEBIAN_FRONTEND noninteractive
-RUN apt-get update && apt-get -y upgrade && apt-get install -y ca-certificates && \
-    addgroup --gid 26657 --system tenderduty && adduser -uid 26657 --ingroup tenderduty --system --home /var/lib/tenderduty tenderduty
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
 
-# 3rd and final stage, copy the minimum parts into a scratch container, is a smaller and more secure build. This pulls
-# in SSL libraries and CAs so Go can connect to TLS servers.
+ENV CGO_ENABLED=0 \
+    GOFLAGS=-mod=readonly \
+    GOTOOLCHAIN=local
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+COPY main.go example-config.yml ./
+COPY seer ./seer
+
+RUN go build \
+      -buildvcs=false \
+      -trimpath \
+      -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
+      -o /out/nosnode-seer . \
+    && mkdir -p /out/state \
+    && printf 'nosnode-seer:x:65532:65532:NosNode Seer:/var/lib/nosnode-seer:/sbin/nologin\n' > /out/passwd \
+    && printf 'nosnode-seer:x:65532:\n' > /out/group
+
 FROM scratch
-COPY --from=ssl /etc/ca-certificates /etc/ca-certificates
-COPY --from=ssl /etc/ssl /etc/ssl
-COPY --from=ssl /usr/share/ca-certificates /usr/share/ca-certificates
-COPY --from=ssl /usr/lib /usr/lib
-COPY --from=ssl /lib /lib
-COPY --from=ssl /lib64 /lib64
 
-COPY --from=ssl /etc/passwd /etc/passwd
-COPY --from=ssl /etc/group /etc/group
-COPY --from=ssl --chown=tenderduty:tenderduty /var/lib/tenderduty /var/lib/tenderduty
+LABEL org.opencontainers.image.title="NosNode Seer" \
+      org.opencontainers.image.description="NosNode🔮 Cosmos validator monitoring foundation" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.source="https://github.com/n0sn0de/tenderduty-nos"
 
-COPY --from=builder /build/app/tenderduty /bin/tenderduty
-COPY --from=builder /build/app/example-config.yml /var/lib/tenderduty
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/passwd /etc/passwd
+COPY --from=build /out/group /etc/group
+COPY --from=build --chown=65532:65532 /out/state /var/lib/nosnode-seer
+COPY --from=build --chown=65532:65532 /out/nosnode-seer /usr/local/bin/nosnode-seer
 
-USER tenderduty
-WORKDIR /var/lib/tenderduty
-
-ENTRYPOINT ["/bin/tenderduty"]
+USER 65532:65532
+WORKDIR /var/lib/nosnode-seer
+EXPOSE 8888 28686
+ENTRYPOINT ["/usr/local/bin/nosnode-seer"]

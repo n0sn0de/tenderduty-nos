@@ -1,0 +1,36 @@
+name: Container
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Build and non-network smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build image without publishing
+        run: |
+          docker build \
+            --build-arg VERSION=ci \
+            --build-arg COMMIT="${GITHUB_SHA}" \
+            --build-arg BUILD_DATE=1970-01-01T00:00:00Z \
+            --tag nosnode-seer:ci .
+
+      - name: Verify runtime identity and privileges
+        run: |
+          docker run --rm --network none --read-only --cap-drop all \
+            --security-opt no-new-privileges nosnode-seer:ci -version
+          test "$(docker image inspect nosnode-seer:ci --format '{{.Config.User}}')" = "65532:65532"
+          test "$(docker image inspect nosnode-seer:ci --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/nosnode-seer"]'
