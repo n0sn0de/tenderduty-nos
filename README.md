@@ -1,74 +1,78 @@
-# TenderDuty v2
+# NosNode Seer · NosNode🔮
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/blockpane/tenderduty.svg)](https://pkg.go.dev/github.com/blockpane/tenderduty)
-[![Gosec](https://github.com/blockpane/tenderduty/workflows/Gosec/badge.svg)](https://github.com/blockpane/tenderduty/actions?query=workflow%3AGosec)
-[![CodeQL](https://github.com/blockpane/tenderduty/workflows/CodeQL/badge.svg)](https://github.com/blockpane/tenderduty/actions?query=workflow%3ACodeQL)
+[![CI](https://github.com/n0sn0de/tenderduty-nos/actions/workflows/ci.yml/badge.svg)](https://github.com/n0sn0de/tenderduty-nos/actions/workflows/ci.yml)
+[![Container](https://github.com/n0sn0de/tenderduty-nos/actions/workflows/container.yml/badge.svg)](https://github.com/n0sn0de/tenderduty-nos/actions/workflows/container.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Tenderduty is a comprehensive monitoring tool for Tendermint chains. Its primary function is to alert a validator if they are missing blocks, and has many other features.
+**NosNode Seer** is a self-hosted Cosmos validator monitor with a static live dashboard, notification integrations, Prometheus metrics, and YAML configuration. The visible operator identity is **NosNode🔮**: read the chain, guard the validator.
 
-v2 is complete rewrite of the original tenderduty graciously sponsored by the [Osmosis Grants Program](https://grants.osmosis.zone/). This new version adds a web dashboard, prometheus exporter, telegram and discord notifications, multi-chain support, more granular alerting, and more types of alerts.
+This repository is a modernized fork of the archived [`blockpane/tenderduty`](https://github.com/blockpane/tenderduty). The original MIT copyright and license remain intact; see [provenance](docs/provenance.md).
 
-![dashboard screenshot](docs/dash.png)
+> **Foundation status:** this first bounded modernization establishes a supported, pinned Go toolchain, deterministic build gates, non-root scratch container, runtime rebrand, compatibility tests, and operator documentation. Core Tendermint/Cosmos monitoring semantics and notification integrations are intentionally retained. The legacy Cosmos SDK line remains a reviewed modernization blocker; see [security](docs/security.md) and [roadmap](docs/roadmap.md).
+
+## What it watches
+
+- validator signing, proposals, missed prevotes/precommits, jail and tombstone state;
+- stalled chains and unhealthy or wrong-network RPC endpoints;
+- configurable Discord, Slack, Telegram, PagerDuty, and healthcheck notifications;
+- a same-origin WebSocket dashboard and Prometheus exporter.
+
+## Quickstart
+
+Requirements: Podman 4+ or Docker with Compose support. No published NosNode Seer image is assumed by this foundation.
+
+```sh
+git clone https://github.com/n0sn0de/tenderduty-nos.git
+cd tenderduty-nos
+cp example-config.yml config.yml
+mkdir -p chains.d
+# Edit config.yml: set validator and RPC values; keep integrations disabled until secrets are supplied.
+podman build --tag nosnode-seer:local .
+podman run --rm --network none --read-only nosnode-seer:local -version
+podman compose -f example-docker-compose.yml up --build
+```
+
+The example compose file binds the public application defaults to loopback only:
+
+- dashboard: `http://127.0.0.1:8888`
+- Prometheus: `http://127.0.0.1:28686/metrics`
+
+Do not expose either listener to an untrusted network without an authenticated TLS reverse proxy. The dashboard has no built-in authentication.
+
+Generate the canonical example without starting monitoring:
+
+```sh
+podman run --rm --network none nosnode-seer:local -example-config
+```
+
+## Compatibility promises in this slice
+
+Existing Tenderduty YAML keys, flags, environment variables, dashboard endpoints, state schema, and `tenderduty_*` Prometheus metric names are preserved. The default state path is now `.nosnode-seer-state.json`; when no `-state` flag is given and only `.tenderduty-state.json` exists, Seer deterministically uses the legacy file and emits a migration notice.
+
+See the complete [migration and compatibility table](docs/migration.md) before replacing an existing process.
 
 ## Documentation
 
-The [documentation](docs/README.md) is a work-in-progress.
+- [Architecture and trust boundaries](docs/architecture.md)
+- [Configuration reference](docs/config.md)
+- [Migration from Tenderduty](docs/migration.md)
+- [Notifications](docs/notifications.md)
+- [Prometheus](docs/prometheus.md)
+- [Security and secret handling](docs/security.md)
+- [Development and verification](docs/development.md)
+- [Upstream provenance](docs/provenance.md)
+- [Phased modernization roadmap](docs/roadmap.md)
 
-## Runtime options:
+## CLI
 
-```
-$ tenderduty -h
-Usage of tenderduty:
-  -example-config
-    	print the an example config.yml and exit
-  -f string
-    	configuration file to use (default "config.yml")
-  -state string
-    	file for storing state between restarts (default ".tenderduty-state.json")
-  -cc string
-    	directory containing additional chain specific configurations (default "chains.d")
-```
-
-## Installing
-
-Detailed installation info is in the [installation doc.](docs/install.md)
-
-30 second quickstart if you already have Docker installed:
-
-```
-mkdir tenderduty && cd tenderduty
-docker run --rm ghcr.io/blockpane/tenderduty:latest -example-config >config.yml
-# edit config.yml and add chains, notification methods etc.
-docker run -d --name tenderduty -p "8888:8888" -p "28686:28686" --restart unless-stopped -v $(pwd)/config.yml:/var/lib/tenderduty/config.yml ghcr.io/blockpane/tenderduty:latest
-docker logs -f --tail 20 tenderduty
+```text
+nosnode-seer -f config.yml -cc chains.d -state .nosnode-seer-state.json
+nosnode-seer -version
+nosnode-seer -h
 ```
 
+Legacy flags `-f`, `-cc`, `-state`, `-example-config`, `-encrypt`, `-decrypt`, `-encrypted-config`, and `-password` remain accepted. `CONFIG` and `PASSWORD` remain supported for compatibility; file-based secret injection is preferred where your runtime supports it.
 
-## Split Configuration
+## License
 
-For validators with many chains, chain specific configuration may be split into additional files and placed into the directory "chains.d".
-
-This directory can be changed with the -cc option
-
-The user friendly chain label will be taken from the name of the file.  
-
-For example:
-
-```
-chains.d/Juno.yml -> Juno
-chains.d/Lum Network.yml -> Lum Network
-```
-
-Configuration inside chains.d/Network.yml will be the YAML contents without the chain label.
-
-For example start directly with:
-
-```
-chain_id: demo-1
-    valoper_address: demovaloper...
-```
-
-## Contributions
-
-Contributions are welcome, please open pull requests against the 'develop' branch, not main.
-
+MIT. Copyright (c) 2021 Block Pane, LLC, as preserved in [`LICENSE`](LICENSE). NosNode Seer changes are distributed under the same license. Rebranding does not erase upstream attribution.
