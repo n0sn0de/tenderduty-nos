@@ -5,13 +5,13 @@
 The module requires Go `1.26.0` semantics and recommends `go1.26.5`. Local and CI receipts use the official multi-platform image index:
 
 ```text
-docker.io/library/golang:1.26.5-bookworm@sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c
+docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651
 ```
 
 The resolved Linux/amd64 image manifest used for local receipts was:
 
 ```text
-sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651
+sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c
 ```
 
 No host Go installation is required. Equivalent Docker commands may replace Podman commands.
@@ -45,7 +45,7 @@ podman run --rm \
   -e GOFLAGS=-mod=readonly \
   -v "$PWD":/src:Z \
   -w /src \
-  docker.io/library/golang:1.26.5-bookworm@sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c \
+  docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 \
   sh -euc '
     go version
     go mod verify

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Go 1.26.5 (bookworm), pinned to the official multi-platform image index.
-FROM docker.io/library/golang:1.26.5-bookworm@sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c AS build
+FROM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS build
 
 ARG VERSION=dev
 ARG COMMIT=unknown

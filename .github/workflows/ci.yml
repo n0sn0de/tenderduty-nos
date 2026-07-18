@@ -17,9 +17,9 @@ jobs:
     name: Go 1.26.5 quality and security
     runs-on: ubuntu-latest
     container:
-      image: docker.io/library/golang:1.26.5-bookworm@sha256:3f6236bd765f898a2a3c2946112b04097814c4529d44534674700cd07b9c6b4c
+      image: docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651
     env:
-      GOFLAGS: -mod=readonly
+      GOFLAGS: "-mod=readonly -buildvcs=false"
       GOTOOLCHAIN: local
     steps:
       - name: Check out source
