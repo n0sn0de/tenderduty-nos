@@ -1,16 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">NosNode Seer mark</title>
-  <desc id="desc">A faceted validator orb and vertical seer aperture protected by a diamond watchtower frame.</desc>
-  <g fill="none" stroke-linecap="square" stroke-linejoin="bevel">
-    <path d="M256 42 L458 246 L256 474 L54 246 Z" stroke="#091129" stroke-width="48"/>
-    <path d="M256 48 L450 246" stroke="#58D5E8" stroke-width="17"/>
-    <path d="M450 246 L256 466 L62 246" stroke="#795CFF" stroke-width="17"/>
-    <path d="M62 246 L256 48" stroke="#B7A7FF" stroke-width="17"/>
+  <title id="title">NosNode Seer crystal ball mark</title>
+  <desc id="desc">A glass crystal ball with a spiral cosmos inside and a clear pedestal below.</desc>
+  <defs><clipPath id="orb"><circle cx="256" cy="217" r="172"/></clipPath></defs>
+  <path d="M172 376 Q172 353 196 345 H316 Q340 353 340 376 L326 402 H186 Z" fill="#291550"/>
+  <path d="M207 392 H305 L320 461 Q320 474 306 474 H206 Q192 474 192 461 Z" fill="#070B1F"/>
+  <path d="M170 452 Q170 436 187 432 H325 Q342 436 342 452 V469 H170 Z" fill="#070B1F" stroke="#7657E8" stroke-width="7"/>
+  <circle cx="256" cy="217" r="172" fill="#070B1F"/>
+  <g clip-path="url(#orb)" fill="none" stroke-linecap="round">
+    <path d="M155 251 C185 146 347 138 364 227 C377 299 274 334 212 287 C161 248 199 185 268 188 C320 191 330 240 297 264 C272 283 233 268 235 239 C237 218 262 209 278 221" stroke="#CE4FAE" stroke-width="18"/>
+    <path d="M348 168 C277 117 170 169 171 245 C172 311 252 336 314 302 C365 274 356 210 311 190 C271 173 227 196 224 231 C221 259 248 278 273 269" stroke="#7657E8" stroke-width="11"/>
+    <path d="M160 207 C219 281 328 289 360 220" stroke="#57D6E8" stroke-width="6" opacity=".82"/>
   </g>
-  <path d="M206 366 H306 L327 431 H185 Z" fill="#091129"/>
-  <circle cx="256" cy="246" r="102" fill="#11183D" stroke="#58D5E8" stroke-width="17"/>
-  <circle cx="256" cy="246" r="61" fill="#795CFF"/>
-  <path d="M256 165 L281 246 L256 327 L231 246 Z" fill="#F1F4FF"/>
-  <circle cx="256" cy="246" r="12" fill="#58D5E8"/>
-  <path d="M256 17 L265 34 L282 43 L265 52 L256 69 L247 52 L230 43 L247 34 Z" fill="#F1F4FF"/>
+  <circle cx="256" cy="217" r="19" fill="#FFD39A"/>
+  <g fill="#EEF4FF"><circle cx="188" cy="151" r="5"/><circle cx="312" cy="130" r="4"/><circle cx="337" cy="250" r="6"/><circle cx="194" cy="285" r="4"/><circle cx="272" cy="316" r="5"/></g>
+  <circle cx="256" cy="217" r="172" fill="none" stroke="#57D6E8" stroke-width="10"/>
+  <path d="M151 169 A145 145 0 0 1 207 92" fill="none" stroke="#EEF4FF" stroke-linecap="round" stroke-width="9"/>
 </svg>
