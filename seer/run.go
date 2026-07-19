@@ -2,7 +2,7 @@ package seer
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -125,71 +125,36 @@ func Run(configFile, stateFile, chainConfigDirectory string, password *string) e
 		}(cc, k)
 	}
 
-	// attempt to save state on exit, only a best-effort ...
-	saved := make(chan interface{})
-	go saveOnExit(stateFile, saved)
+	saved := make(chan error, 1)
+	go saveOnExit(td, stateFile, saved)
 
 	<-td.ctx.Done()
-	<-saved
-
-	return err
+	return errors.Join(err, <-saved)
 }
 
-func saveOnExit(stateFile string, saved chan interface{}) {
+func saveOnExit(config *Config, stateFile string, saved chan<- error) {
 	quitting := make(chan os.Signal, 1)
 	signal.Notify(quitting, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(quitting)
+	log.Println("durable state checkpoint handler ready")
 
-	saveState := func() {
-		defer close(saved)
-		log.Println("saving state...")
-		//#nosec -- variable specified on command line
-		f, e := os.OpenFile(stateFile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-		if e != nil {
-			log.Println(e)
-			return
+	saveState := func() error {
+		log.Println("saving durable state...")
+		if err := writeStateAtomic(stateFile, snapshotSavedState(config)); err != nil {
+			return fmt.Errorf("save durable state: %w", err)
 		}
-		td.chainsMux.Lock()
-		defer td.chainsMux.Unlock()
-		blocks := make(map[string][]int)
-		// only need to save counts if the dashboard exists
-		if td.EnableDash {
-			for k, v := range td.Chains {
-				blocks[k] = v.blocksResults
-			}
-		}
-		nodesDown := make(map[string]map[string]time.Time)
-		for k, v := range td.Chains {
-			for _, node := range v.Nodes {
-				if node.down {
-					if nodesDown[k] == nil {
-						nodesDown[k] = make(map[string]time.Time)
-					}
-					nodesDown[k][node.Url] = node.downSince
-				}
-			}
-		}
-		b, e := json.Marshal(&savedState{
-			Alarms:    alarms,
-			Blocks:    blocks,
-			NodesDown: nodesDown,
-		})
-		if e != nil {
-			log.Println(e)
-			return
-		}
-		_, _ = f.Write(b)
-		_ = f.Close()
+		log.Printf("saved durable state version %d to %s", currentStateVersion, stateFile)
 		log.Println("NosNode Seer exiting.")
+		return nil
 	}
-	for {
-		select {
-		case <-td.ctx.Done():
-			saveState()
-			return
-		case <-quitting:
-			saveState()
-			td.cancel()
-			return
-		}
+
+	select {
+	case <-config.ctx.Done():
+		saved <- saveState()
+	case <-quitting:
+		err := saveState()
+		config.cancel()
+		saved <- err
 	}
+	close(saved)
 }

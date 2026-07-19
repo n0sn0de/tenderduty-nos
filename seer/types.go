@@ -3,7 +3,6 @@ package seer
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -499,83 +498,21 @@ func loadConfig(yamlFile, stateFile, chainConfigDirectory string, password *stri
 		notifyMux:     sync.RWMutex{},
 	}
 
-	//#nosec -- variable specified on command line
-	sf, e := os.OpenFile(stateFile, os.O_RDONLY, 0600)
+	saved, stateInfo, e := loadState(stateFile)
 	if e != nil {
-		l("could not load saved state", e.Error())
+		return nil, e
 	}
-	b, e := io.ReadAll(sf)
-	_ = sf.Close()
-	if e != nil {
-		l("could not read saved state", e.Error())
-	}
-	saved := &savedState{}
-	e = json.Unmarshal(b, saved)
-	if e != nil {
-		l("could not unmarshal saved state", e.Error())
-	}
-	for k, v := range saved.Blocks {
-		if c.Chains[k] != nil {
-			c.Chains[k].blocksResults = v
+	if stateInfo.Source != "" {
+		switch {
+		case stateInfo.RecoveredFromBackup:
+			l("recovered durable state from rollback backup", stateInfo.Source)
+		case stateInfo.Legacy:
+			l("loaded legacy durable state", stateInfo.Source)
+		default:
+			l(fmt.Sprintf("loaded durable state version %d", stateInfo.Version), stateInfo.Source)
 		}
 	}
-
-	// restore alarm state to prevent duplicate alerts
-	if saved.Alarms != nil {
-		if saved.Alarms.SentTgAlarms != nil {
-			alarms.SentTgAlarms = saved.Alarms.SentTgAlarms
-			clearStale(alarms.SentTgAlarms, "telegram", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.SentPdAlarms != nil {
-			alarms.SentPdAlarms = saved.Alarms.SentPdAlarms
-			clearStale(alarms.SentPdAlarms, "PagerDuty", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.SentDiAlarms != nil {
-			alarms.SentDiAlarms = saved.Alarms.SentDiAlarms
-			clearStale(alarms.SentDiAlarms, "Discord", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.SentSlkAlarms != nil {
-			alarms.SentSlkAlarms = saved.Alarms.SentSlkAlarms
-			clearStale(alarms.SentSlkAlarms, "Slack", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.AllAlarms != nil {
-			alarms.AllAlarms = saved.Alarms.AllAlarms
-			for _, alrm := range saved.Alarms.AllAlarms {
-				clearStale(alrm, "dashboard", c.Pagerduty.Enabled, staleHours)
-			}
-		}
-	}
-
-	// we need to know if the node was already down to clear alarms
-	if saved.NodesDown != nil {
-		for k, v := range saved.NodesDown {
-			for nodeUrl := range v {
-				if !v[nodeUrl].IsZero() {
-					if c.Chains[k] != nil {
-						for j := range c.Chains[k].Nodes {
-							if c.Chains[k].Nodes[j].Url == nodeUrl {
-								c.Chains[k].Nodes[j].down = true
-								c.Chains[k].Nodes[j].wasDown = true
-								c.Chains[k].Nodes[j].downSince = v[nodeUrl]
-							}
-						}
-					}
-				}
-			}
-		}
-		// now we need to know if all RPC endpoints were down.
-		for k, v := range c.Chains {
-			downCount := 0
-			for j := range v.Nodes {
-				if v.Nodes[j].down {
-					downCount += 1
-				}
-			}
-			if downCount == len(c.Chains[k].Nodes) {
-				c.Chains[k].noNodes = true
-			}
-		}
-	}
+	restoreSavedState(c, saved)
 
 	return c, nil
 }
