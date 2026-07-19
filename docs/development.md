@@ -77,7 +77,7 @@ podman run --rm --network none --read-only --cap-drop all \
 CONTAINER_RUNTIME=podman bash scripts/container-state-smoke.sh nosnode-seer:local
 ```
 
-The runtime stage is `scratch`, uses UID/GID `65532`, and contains only CA roots,
+The runtime stage is `scratch`, retains the historical UID/GID `26657:26657`, and contains only CA roots,
 minimal account metadata, the canonical and deprecated migration state
 directories, the canonical static binary, and its deprecated executable alias.
 The state smoke uses no network and exercises checkpoint, restart, rollback,

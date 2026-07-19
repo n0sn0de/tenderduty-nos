@@ -12,7 +12,7 @@ Stop the old process, back up config and state, then test Seer with an explicit 
 | Chain directory default | `chains.d` | Preserved | None. |
 | CLI flags | `-f`, `-cc`, `-state`, encryption flags | Preserved; `-version` added | Update executable only. |
 | Environment | `CONFIG`, `PASSWORD` | Preserved | Prefer runtime secret files when possible. |
-| State schema | Tenderduty JSON | Preserved | No conversion. |
+| State schema | Tenderduty JSON | Legacy fields preserved; new checkpoints add only top-level `"version": 1` | No pre-start conversion. An old writer can read versioned state but may remove the additive field when it rewrites the file. |
 | State default | `.tenderduty-state.json` | `.nosnode-seer-state.json` | Automatic legacy fallback when only the old default exists; explicit `-state` always wins. |
 | Metrics | `tenderduty_*` names and labels | Preserved exactly | Do not rewrite dashboards/alerts. |
 | Dashboard HTTP | `/`, `/state`, `/logs`, `/logsenabled`, `/ws` | Preserved | Theme/copy changed; consumers keep endpoints. |
@@ -21,7 +21,7 @@ Stop the old process, back up config and state, then test Seer with an explicit 
 | Alert delivery state | Destination marked sent before network acceptance; unbounded per-event goroutines | Commit after acceptance, bounded deadlines/workers, destination-safe retries | No YAML change. Review [delivery guarantees](notifications.md#delivery-guarantees-and-retry-policy); queued events remain in-memory only. |
 | Go module | `github.com/blockpane/tenderduty/v2` | `github.com/n0sn0de/tenderduty-nos` | Downstream Go imports must update; this executable did not promise a stable library API. |
 | Go package path | `/td2` | `/seer` | Update downstream imports if any. |
-| Container user | root-capable legacy image | numeric non-root `65532:65532`, scratch runtime | Ensure mounted state storage is writable by that UID/GID. |
+| Container user | historical numeric non-root `26657:26657` | retained as `26657:26657` in the scratch runtime for this migration cycle | Existing directories owned by `26657:26657` at mode `0755`, configs/state at `0644`, and private state at `0600` remain usable. |
 
 ## Deterministic state fallback
 
@@ -40,7 +40,7 @@ nosnode-seer -f config.yml -cc chains.d -state .nosnode-seer-state.json
 
 ## Rollback
 
-Keep the original binary/image, config backup, and state backup until alerting and metrics are observed in a non-production test. Rollback is executable replacement plus the original explicit state path; the schema was not rewritten.
+Keep the original binary/image, config backup, and state backup until alerting and metrics are observed in a non-production test. New checkpoints preserve the legacy fields and add `"version": 1`; they do not wrap the document. A rolled-back Tenderduty writer is expected to ignore that unknown field and may remove it on its next write. Seer subsequently treats that unversioned document as version 0. Keep an operator-owned copy because the old writer does not provide Seer's atomic `.bak` checkpoint contract.
 
 ## Durable state and rollback contract
 
@@ -117,4 +117,12 @@ is deprecated: update the entrypoint and volume destination to the canonical
 paths before the next breaking container migration. Container CI exercises
 clean SIGTERM, restart, backup recovery, explicit state, and the deprecated
 bridge with `--network none`, a read-only root filesystem, no capabilities,
-`no-new-privileges`, and UID/GID 65532.
+`no-new-privileges`, and the retained UID/GID `26657:26657`. The smoke uses
+actual legacy directory/file modes (`0755`, `0644`, and `0600`) and verifies the
+sentinel alarm IDs/timestamps, block history, and node-down timestamp in both
+primary and backup files across checkpoint, restart, and recovery.
+
+A future UID/GID transition is a separate breaking migration. It must ship with
+an explicit ownership-conversion procedure and equivalent rootful and rootless
+volume tests; this compatibility cycle deliberately does not perform that
+transition.

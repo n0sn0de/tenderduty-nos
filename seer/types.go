@@ -35,6 +35,10 @@ type Config struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	alarms     *alarmCache
+	stateMux   sync.RWMutex
+	ingressMux sync.Mutex
+	ingressWG  sync.WaitGroup
+	accepting  bool
 
 	// EnableDash enables the web dashboard
 	EnableDash bool `yaml:"enable_dashboard"`
@@ -82,6 +86,10 @@ type savedState struct {
 // ChainConfig represents a validator to be monitored on a chain, it is somewhat of a misnomer since multiple
 // validators can be monitored on a single chain.
 type ChainConfig struct {
+	stateMux                 *sync.RWMutex
+	localStateMux            sync.RWMutex
+	rpcMux                   sync.Mutex
+	connectionMux            sync.Mutex
 	name                     string
 	wsclient                 *TmConn       // custom websocket client to work around wss:// bugs in tendermint
 	client                   *rpchttp.HTTP // legit tendermint client
@@ -258,12 +266,15 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 
 	var wantsPublic bool
 	for k, v := range c.Chains {
+		stateMux := v.durableStateMux()
+		stateMux.Lock()
 		if v.blocksResults == nil {
 			v.blocksResults = make([]int, showBLocks)
 			for i := range v.blocksResults {
 				v.blocksResults[i] = -1
 			}
 		}
+		stateMux.Unlock()
 		if v.name == "" {
 			v.name = k
 		}
@@ -338,7 +349,7 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 				Nodes:        len(v.Nodes),
 				HealthyNodes: 0,
 				ActiveAlerts: 0,
-				Blocks:       v.blocksResults,
+				Blocks:       v.blockResultsSnapshot(),
 			}
 		}
 	}
@@ -488,15 +499,9 @@ func loadConfig(yamlFile, stateFile, chainConfigDirectory string, password *stri
 	c.statsChan = make(chan *promUpdate, len(c.Chains)*2)
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
-	// handle cached data. FIXME: incomplete.
-	c.alarms = &alarmCache{
-		SentPdAlarms:  make(map[string]time.Time),
-		SentTgAlarms:  make(map[string]time.Time),
-		SentDiAlarms:  make(map[string]time.Time),
-		SentSlkAlarms: make(map[string]time.Time),
-		AllAlarms:     make(map[string]map[string]time.Time),
-		notifyMux:     sync.RWMutex{},
-	}
+	c.alarms = newAlarmCache()
+	c.bindDurableState()
+	alarms = c.alarms
 
 	saved, stateInfo, e := loadState(stateFile)
 	if e != nil {

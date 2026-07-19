@@ -1,7 +1,6 @@
 package seer
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -443,8 +442,6 @@ func TestDeliveryOutcomeObserverUsesBoundedLabels(t *testing.T) {
 }
 
 func TestNotificationWorkerIsSerialAndOrdered(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	alerts := make(chan *alertMsg, 2)
 	done := make(chan struct{})
 	var mu sync.Mutex
@@ -466,9 +463,10 @@ func TestNotificationWorkerIsSerialAndOrdered(t *testing.T) {
 		}
 		mu.Unlock()
 	}
-	go notificationWorker(ctx, alerts, deliver)
+	go notificationWorker(alerts, deliver)
 	alerts <- &alertMsg{message: "trigger"}
 	alerts <- &alertMsg{message: "resolution", resolved: true}
+	close(alerts)
 
 	select {
 	case <-done:
@@ -820,6 +818,7 @@ func setupTransitionTest(t *testing.T) (*ChainConfig, chan *alertMsg) {
 		alertChan: alertCh,
 		Chains:    map[string]*ChainConfig{"test-chain": cc},
 	}
+	td.startAlertIngress()
 	t.Cleanup(func() {
 		td = oldTD
 		alarms = oldAlarms

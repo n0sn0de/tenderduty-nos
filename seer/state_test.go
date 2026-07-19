@@ -2,7 +2,6 @@ package seer
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -183,16 +182,16 @@ chains:
 	}
 }
 
-func TestSaveOnExitPropagatesStateWriteFailure(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	config := &Config{ctx: ctx, cancel: cancel, Chains: map[string]*ChainConfig{}}
-	t.Cleanup(cancel)
-
-	result := make(chan error, 1)
-	go saveOnExit(config, filepath.Join(t.TempDir(), "missing", "state.json"), result)
-	cancel()
-	if err := <-result; err == nil {
-		t.Fatal("saveOnExit() reported success after the atomic writer failed")
+func TestShutdownPropagatesStateWriteFailure(t *testing.T) {
+	config := &Config{alarms: newAlarmCache(), Chains: map[string]*ChainConfig{}}
+	lifecycle := newRuntimeLifecycle(
+		config,
+		filepath.Join(t.TempDir(), "missing", "state.json"),
+		time.Second,
+		writeStateAtomic,
+	)
+	if err := lifecycle.shutdown(); err == nil {
+		t.Fatal("shutdown reported success after the atomic writer failed")
 	}
 }
 

@@ -43,6 +43,7 @@ type stateTempFile interface {
 type stateFileOps struct {
 	readFile      func(string) ([]byte, error)
 	createTemp    func(string, string) (stateTempFile, error)
+	encodeJSON    func(io.Writer, any) error
 	rename        func(string, string) error
 	remove        func(string) error
 	syncDirectory func(string) error
@@ -53,6 +54,9 @@ func defaultStateFileOps() stateFileOps {
 		readFile: os.ReadFile,
 		createTemp: func(directory, pattern string) (stateTempFile, error) {
 			return os.CreateTemp(directory, pattern)
+		},
+		encodeJSON: func(writer io.Writer, value any) error {
+			return json.NewEncoder(writer).Encode(value)
 		},
 		rename:        os.Rename,
 		remove:        os.Remove,
@@ -144,32 +148,39 @@ func restoreSavedState(config *Config, saved *savedState) {
 	if saved == nil {
 		return
 	}
+	config.bindDurableState()
+	config.stateMux.Lock()
+	defer config.stateMux.Unlock()
+
 	for chainName, blocks := range saved.Blocks {
 		if config.Chains[chainName] != nil {
-			config.Chains[chainName].blocksResults = blocks
+			config.Chains[chainName].blocksResults = append([]int(nil), blocks...)
 		}
 	}
 
 	// Restore accepted-delivery and dashboard state to preserve restart deduplication.
+	cache := config.alarmState()
+	cache.notifyMux.Lock()
+	defer cache.notifyMux.Unlock()
 	if saved.Alarms != nil {
 		if saved.Alarms.SentTgAlarms != nil {
-			alarms.SentTgAlarms = saved.Alarms.SentTgAlarms
-			clearStale(alarms.SentTgAlarms, "telegram", config.Pagerduty.Enabled, staleHours)
+			cache.SentTgAlarms = saved.Alarms.SentTgAlarms
+			clearStale(cache.SentTgAlarms, "telegram", config.Pagerduty.Enabled, staleHours)
 		}
 		if saved.Alarms.SentPdAlarms != nil {
-			alarms.SentPdAlarms = saved.Alarms.SentPdAlarms
-			clearStale(alarms.SentPdAlarms, "PagerDuty", config.Pagerduty.Enabled, staleHours)
+			cache.SentPdAlarms = saved.Alarms.SentPdAlarms
+			clearStale(cache.SentPdAlarms, "PagerDuty", config.Pagerduty.Enabled, staleHours)
 		}
 		if saved.Alarms.SentDiAlarms != nil {
-			alarms.SentDiAlarms = saved.Alarms.SentDiAlarms
-			clearStale(alarms.SentDiAlarms, "Discord", config.Pagerduty.Enabled, staleHours)
+			cache.SentDiAlarms = saved.Alarms.SentDiAlarms
+			clearStale(cache.SentDiAlarms, "Discord", config.Pagerduty.Enabled, staleHours)
 		}
 		if saved.Alarms.SentSlkAlarms != nil {
-			alarms.SentSlkAlarms = saved.Alarms.SentSlkAlarms
-			clearStale(alarms.SentSlkAlarms, "Slack", config.Pagerduty.Enabled, staleHours)
+			cache.SentSlkAlarms = saved.Alarms.SentSlkAlarms
+			clearStale(cache.SentSlkAlarms, "Slack", config.Pagerduty.Enabled, staleHours)
 		}
 		if saved.Alarms.AllAlarms != nil {
-			alarms.AllAlarms = saved.Alarms.AllAlarms
+			cache.AllAlarms = saved.Alarms.AllAlarms
 			for _, chainAlarms := range saved.Alarms.AllAlarms {
 				clearStale(chainAlarms, "dashboard", config.Pagerduty.Enabled, staleHours)
 			}
@@ -211,15 +222,13 @@ func restoreSavedState(config *Config, saved *savedState) {
 }
 
 func snapshotSavedState(config *Config) *savedState {
-	config.chainsMux.RLock()
-	defer config.chainsMux.RUnlock()
+	config.stateMux.RLock()
+	defer config.stateMux.RUnlock()
 
 	blocks := make(map[string][]int)
 	nodesDown := make(map[string]map[string]time.Time)
 	for chainName, chain := range config.Chains {
-		if config.EnableDash {
-			blocks[chainName] = append([]int(nil), chain.blocksResults...)
-		}
+		blocks[chainName] = append([]int(nil), chain.blocksResults...)
 		for _, node := range chain.Nodes {
 			if !node.down {
 				continue
@@ -231,10 +240,36 @@ func snapshotSavedState(config *Config) *savedState {
 		}
 	}
 	return &savedState{
-		Alarms:    alarms,
+		Alarms:    cloneAlarmState(config.alarmState()),
 		Blocks:    blocks,
 		NodesDown: nodesDown,
 	}
+}
+
+func cloneAlarmState(source *alarmCache) *alarmCache {
+	if source == nil {
+		return newAlarmCache()
+	}
+	source.notifyMux.RLock()
+	defer source.notifyMux.RUnlock()
+	clone := newAlarmCache()
+	clone.SentPdAlarms = cloneAlarmTimes(source.SentPdAlarms)
+	clone.SentTgAlarms = cloneAlarmTimes(source.SentTgAlarms)
+	clone.SentDiAlarms = cloneAlarmTimes(source.SentDiAlarms)
+	clone.SentSlkAlarms = cloneAlarmTimes(source.SentSlkAlarms)
+	clone.AllAlarms = make(map[string]map[string]time.Time, len(source.AllAlarms))
+	for chain, chainAlarms := range source.AllAlarms {
+		clone.AllAlarms[chain] = cloneAlarmTimes(chainAlarms)
+	}
+	return clone
+}
+
+func cloneAlarmTimes(source map[string]time.Time) map[string]time.Time {
+	clone := make(map[string]time.Time, len(source))
+	for message, timestamp := range source {
+		clone[message] = timestamp
+	}
+	return clone
 }
 
 func writeStateAtomic(statePath string, state *savedState) error {
@@ -272,7 +307,7 @@ func writeStateAtomicWithOps(statePath string, state *savedState, operations sta
 
 func atomicReplaceJSON(target string, document stateDocument, operations stateFileOps) error {
 	return atomicReplace(target, operations, func(writer io.Writer) error {
-		if err := json.NewEncoder(writer).Encode(&document); err != nil {
+		if err := operations.encodeJSON(writer, &document); err != nil {
 			return fmt.Errorf("encode state: %w", err)
 		}
 		return nil
