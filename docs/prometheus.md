@@ -24,6 +24,12 @@ Current families cover:
 
 Common labels include chain ID, chain display name, validator/operator identity, and node URL where applicable. Those labels can reveal operational topology; restrict scraper and dashboard access.
 
+### Notification delivery outcomes
+
+`tenderduty_notification_delivery_attempts_total{destination,outcome}` counts bounded delivery results without changing any existing series. `destination` is one of `pagerduty`, `discord`, `telegram`, or `slack`; `outcome` is one of `accepted`, `rejected`, or `transport_error`. The maximum label set is therefore 12 series. No chain, validator, endpoint, channel, dedup key, routing key, token, or payload label is emitted.
+
+A PagerDuty retry records each attempt separately. Suppressed duplicates and resolutions with no accepted trigger make no network attempt and do not increment the counter.
+
 ## Minimal scrape job
 
 ```yaml

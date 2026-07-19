@@ -3,18 +3,28 @@ package seer
 import (
 	"context"
 	"fmt"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
-	promMux sync.RWMutex
+	promMux                      sync.RWMutex
+	notificationDeliveryOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "tenderduty_notification_delivery_attempts_total",
+		Help: "Notification delivery attempts by bounded destination and outcome labels.",
+	}, []string{"destination", "outcome"})
 )
+
+func observeNotificationDelivery(destination, outcome string) {
+	notificationDeliveryOutcomes.WithLabelValues(destination, outcome).Inc()
+	log.Printf("notification delivery destination=%s outcome=%s", destination, outcome)
+}
 
 type metricType uint8
 

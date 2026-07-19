@@ -22,6 +22,18 @@ Create a bot, add it to the intended chat/channel, and configure the bot token p
 
 The optional dead-man's-switch sends periodic HTTP pings to `ping_url`. The URL commonly embeds a secret identifier. It confirms process activity, not validator health, and does not replace alert integrations.
 
+## Delivery guarantees and retry policy
+
+Delivery state is committed only after a destination accepts the request. A rejected or failed request releases its in-flight reservation, so a later emission of the same alert remains eligible. Resolutions are sent only to destinations that previously accepted the matching trigger, and a failed resolution leaves that destination open for a later retry. Alert message text and existing per-destination dedup keys are unchanged.
+
+Every network attempt has a five-second deadline. Slack, Discord, and Telegram make one bounded send attempt per emitted event and do not retry in-process: after an ambiguous transport failure the remote service may have accepted the message, so an automatic retry could duplicate it. If the same event is emitted again, it is eligible for another attempt. This is **at-least-once**, not exactly-once, behavior; an ambiguous failure followed by a later retry can produce a duplicate.
+
+PagerDuty makes at most two five-second attempts separated by a fixed 250 ms delay. Both attempts retain the existing Events API v2 dedup key, allowing PagerDuty to coalesce an ambiguous retry. This does not extend exactly-once guarantees beyond PagerDuty's API contract.
+
+A single ordered worker drains a bounded 64-event in-memory channel. It fans each event out to at most four fixed destination workers, waits for them, then processes the next event so trigger/resolution order is preserved per destination. There is no unbounded goroutine or queue and no durable outbox: process termination can lose queued events, and a full queue applies backpressure to alert producers.
+
+Delivery logs and metrics contain only the fixed destination and outcome values. They intentionally omit webhook URLs, bot tokens, routing keys, channels, chain/validator identity, and payload text.
+
 ## Safe rollout
 
 1. Keep all integrations disabled while validating config and dashboard locally.

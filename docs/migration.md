@@ -18,6 +18,7 @@ Stop the old process, back up config and state, then test Seer with an explicit 
 | Dashboard HTTP | `/`, `/state`, `/logs`, `/logsenabled`, `/ws` | Preserved | Theme/copy changed; consumers keep endpoints. |
 | Dashboard assets | UIkit/Lodash and upstream visuals | First-party CSS/vanilla JS, no visual bundle | Clear browser cache after cutover. |
 | Alert identity | Tenderduty wording | `NosNode🔮` in Slack, Discord, Telegram, and PagerDuty summaries | Routing/dedup keys remain unchanged. |
+| Alert delivery state | Destination marked sent before network acceptance; unbounded per-event goroutines | Commit after acceptance, bounded deadlines/workers, destination-safe retries | No YAML change. Review [delivery guarantees](notifications.md#delivery-guarantees-and-retry-policy); queued events remain in-memory only. |
 | Go module | `github.com/blockpane/tenderduty/v2` | `github.com/n0sn0de/tenderduty-nos` | Downstream Go imports must update; this executable did not promise a stable library API. |
 | Go package path | `/td2` | `/seer` | Update downstream imports if any. |
 | Container user | root-capable legacy image | numeric non-root `65532:65532`, scratch runtime | Ensure mounted state storage is writable by that UID/GID. |
