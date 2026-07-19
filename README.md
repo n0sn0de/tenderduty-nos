@@ -47,7 +47,7 @@ podman run --rm --network none nosnode-seer:local -example-config
 
 ## Compatibility promises in this slice
 
-Existing Tenderduty YAML keys, flags, environment variables, dashboard endpoints, state schema, and `tenderduty_*` Prometheus metric names are preserved. The default state path is now `.nosnode-seer-state.json`; when no `-state` flag is given and only `.tenderduty-state.json` exists, Seer deterministically uses the legacy file and emits a migration notice.
+Existing Tenderduty YAML keys, flags, environment variables, dashboard endpoints, and `tenderduty_*` Prometheus metric names are preserved. Legacy state JSON remains directly readable; new atomic checkpoints add only a rollback-safe top-level version field and maintain a `.bak` copy. The default state path is now `.nosnode-seer-state.json`; when no `-state` flag is given and only `.tenderduty-state.json` exists, Seer deterministically uses the legacy file and emits a migration notice. The container retains a deprecated `/bin/tenderduty` plus `/var/lib/tenderduty` bridge for one migration cycle.
 
 See the complete [migration and compatibility table](docs/migration.md) before replacing an existing process.
 

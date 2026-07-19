@@ -18,12 +18,17 @@ RUN go mod download && go mod verify
 COPY main.go example-config.yml ./
 COPY seer ./seer
 
-RUN go build \
+RUN mkdir -p \
+      /out/rootfs/bin \
+      /out/rootfs/usr/local/bin \
+      /out/rootfs/var/lib/nosnode-seer \
+      /out/rootfs/var/lib/tenderduty \
+    && go build \
       -buildvcs=false \
       -trimpath \
       -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
-      -o /out/nosnode-seer . \
-    && mkdir -p /out/state \
+      -o /out/rootfs/usr/local/bin/nosnode-seer . \
+    && ln -s /usr/local/bin/nosnode-seer /out/rootfs/bin/tenderduty \
     && printf 'nosnode-seer:x:65532:65532:NosNode Seer:/var/lib/nosnode-seer:/sbin/nologin\n' > /out/passwd \
     && printf 'nosnode-seer:x:65532:\n' > /out/group
 
@@ -37,8 +42,9 @@ LABEL org.opencontainers.image.title="NosNode Seer" \
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/passwd /etc/passwd
 COPY --from=build /out/group /etc/group
-COPY --from=build --chown=65532:65532 /out/state /var/lib/nosnode-seer
-COPY --from=build --chown=65532:65532 /out/nosnode-seer /usr/local/bin/nosnode-seer
+# One-cycle migration bridge: canonical binary/state path plus a deprecated
+# legacy command and volume target. The legacy command still runs Seer.
+COPY --from=build --chown=65532:65532 /out/rootfs/ /
 
 USER 65532:65532
 WORKDIR /var/lib/nosnode-seer

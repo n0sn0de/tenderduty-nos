@@ -41,3 +41,80 @@ nosnode-seer -f config.yml -cc chains.d -state .nosnode-seer-state.json
 ## Rollback
 
 Keep the original binary/image, config backup, and state backup until alerting and metrics are observed in a non-production test. Rollback is executable replacement plus the original explicit state path; the schema was not rewritten.
+
+## Durable state and rollback contract
+
+NosNode Seer keeps the legacy top-level state shape and adds only a top-level
+`"version": 1` field on new writes:
+
+```json
+{
+  "version": 1,
+  "alarms": {},
+  "blocks": {},
+  "nodes_down": {}
+}
+```
+
+This is deliberately **not** a wrapping envelope. Existing Tenderduty binaries
+ignore the unknown `version` field and continue to read `alarms`, `blocks`, and
+`nodes_down` in place. NosNode Seer accepts unversioned legacy documents as
+version 0, preserving block history, node-down history, accepted-delivery alarm
+history, and dashboard alarm history. Unsupported future versions are rejected
+instead of silently misread.
+
+State selection remains compatible: explicit `-state PATH` wins; otherwise the
+new default is preferred; otherwise the legacy default is used in place. With
+neither default present, startup uses empty state and the first clean shutdown
+creates `.nosnode-seer-state.json`.
+
+Each checkpoint is written to a mode `0600` temporary file in the destination
+directory. Seer encodes and flushes the document, calls file `fsync`, closes the
+temporary file, renames it over the destination, then calls directory `fsync`.
+The destination is never truncated in place and any failure is returned to the
+caller, causing a non-zero process exit.
+
+For an existing valid primary, the exact previous primary is first installed
+atomically as `PATH.bak`; only then is the new primary installed:
+
+| Primary before startup/checkpoint | Backup | Behavior |
+| --- | --- | --- |
+| Missing | Missing | Start empty; first checkpoint creates only the primary. |
+| Valid | Any | Load primary; checkpoint installs that primary as `.bak` before replacing it. |
+| Missing, empty, or malformed | Valid | Load `.bak` and report recovery; checkpoint repairs primary without overwriting the known-good backup. |
+| Empty or malformed | Missing or invalid | Stop with an error; do not silently discard durable state. |
+| Unsupported future version | Missing or invalid | Stop with an error. |
+| Backup replacement fails | Existing valid primary | Return an error and leave primary untouched. |
+| Primary replacement fails after backup succeeds | Valid primary and backup | Return an error; both still contain the last known-good primary. |
+
+A directory-`fsync` failure is also returned. As with every POSIX atomic rename,
+the rename may already be visible when a post-rename directory sync reports an
+error; the rollback copy remains available.
+
+## Container migration bridge
+
+The canonical executable and writable state location are
+`/usr/local/bin/nosnode-seer` and `/var/lib/nosnode-seer`.
+
+For one migration cycle, the image also includes an executable deprecated alias
+at `/bin/tenderduty` and a deprecated `/var/lib/tenderduty` directory. Invoking
+the deprecated alias selects the deprecated directory as its working directory.
+The canonical entrypoint also selects it when running from the canonical image
+workdir, no explicit `-f` or `CONFIG` is set, canonical `config.yml` is absent,
+and the deprecated mount contains `config.yml`. Therefore an existing volume
+containing `config.yml` and `.tenderduty-state.json` continues to work without
+data conversion:
+
+```sh
+docker run --rm \
+  --volume tenderduty-data:/var/lib/tenderduty \
+  --entrypoint /bin/tenderduty \
+  ghcr.io/n0sn0de/nosnode-seer:TAG
+```
+
+The process identity, logs, and version output remain NosNode Seer. This bridge
+is deprecated: update the entrypoint and volume destination to the canonical
+paths before the next breaking container migration. Container CI exercises
+clean SIGTERM, restart, backup recovery, explicit state, and the deprecated
+bridge with `--network none`, a read-only root filesystem, no capabilities,
+`no-new-privileges`, and UID/GID 65532.

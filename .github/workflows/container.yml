@@ -34,3 +34,6 @@ jobs:
             --security-opt no-new-privileges nosnode-seer:ci -version
           test "$(docker image inspect nosnode-seer:ci --format '{{.Config.User}}')" = "65532:65532"
           test "$(docker image inspect nosnode-seer:ci --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/nosnode-seer"]'
+
+      - name: Verify durable state and migration contracts offline
+        run: CONTAINER_RUNTIME=docker bash scripts/container-state-smoke.sh nosnode-seer:ci
