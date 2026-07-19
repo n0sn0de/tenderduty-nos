@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -55,15 +55,46 @@ type alarmCache struct {
 	SentSlkAlarms  map[string]time.Time            `json:"sent_slk_alarms"`
 	AllAlarms      map[string]map[string]time.Time `json:"sent_all_alarms"`
 	flappingAlarms map[string]map[string]time.Time
+	inFlight       map[notifyDest]map[string]struct{}
 	notifyMux      sync.RWMutex
 }
 
+func newAlarmCache() *alarmCache {
+	return &alarmCache{
+		SentPdAlarms:   make(map[string]time.Time),
+		SentTgAlarms:   make(map[string]time.Time),
+		SentDiAlarms:   make(map[string]time.Time),
+		SentSlkAlarms:  make(map[string]time.Time),
+		AllAlarms:      make(map[string]map[string]time.Time),
+		flappingAlarms: make(map[string]map[string]time.Time),
+		inFlight:       make(map[notifyDest]map[string]struct{}),
+	}
+}
+
+func (a *alarmCache) MarshalJSON() ([]byte, error) {
+	a.notifyMux.RLock()
+	defer a.notifyMux.RUnlock()
+	return json.Marshal(struct {
+		SentPdAlarms  map[string]time.Time            `json:"sent_pd_alarms"`
+		SentTgAlarms  map[string]time.Time            `json:"sent_tg_alarms"`
+		SentDiAlarms  map[string]time.Time            `json:"sent_di_alarms"`
+		SentSlkAlarms map[string]time.Time            `json:"sent_slk_alarms"`
+		AllAlarms     map[string]map[string]time.Time `json:"sent_all_alarms"`
+	}{
+		SentPdAlarms:  a.SentPdAlarms,
+		SentTgAlarms:  a.SentTgAlarms,
+		SentDiAlarms:  a.SentDiAlarms,
+		SentSlkAlarms: a.SentSlkAlarms,
+		AllAlarms:     a.AllAlarms,
+	})
+}
+
 func (a *alarmCache) clearNoBlocks(chain string) {
+	a.notifyMux.Lock()
+	defer a.notifyMux.Unlock()
 	if a.AllAlarms == nil || a.AllAlarms[chain] == nil {
 		return
 	}
-	a.notifyMux.Lock()
-	defer a.notifyMux.Unlock()
 	for clearAlarm := range a.AllAlarms[chain] {
 		if strings.HasPrefix(clearAlarm, "stalled: have not seen a new block on") {
 			delete(a.AllAlarms[chain], clearAlarm)
@@ -72,116 +103,240 @@ func (a *alarmCache) clearNoBlocks(chain string) {
 }
 
 func (a *alarmCache) getCount(chain string) int {
+	a.notifyMux.RLock()
+	defer a.notifyMux.RUnlock()
 	if a.AllAlarms == nil || a.AllAlarms[chain] == nil {
 		return 0
 	}
-	a.notifyMux.RLock()
-	defer a.notifyMux.RUnlock()
 	return len(a.AllAlarms[chain])
 }
 
 func (a *alarmCache) clearAll(chain string) {
+	a.notifyMux.Lock()
+	defer a.notifyMux.Unlock()
 	if a.AllAlarms == nil || a.AllAlarms[chain] == nil {
 		return
 	}
-	a.notifyMux.Lock()
-	defer a.notifyMux.Unlock()
 	a.AllAlarms[chain] = make(map[string]time.Time)
 }
 
 // alarms is used to prevent double notifications. TODO: save on exit / load on start
-var alarms = &alarmCache{
-	SentPdAlarms:   make(map[string]time.Time),
-	SentTgAlarms:   make(map[string]time.Time),
-	SentDiAlarms:   make(map[string]time.Time),
-	SentSlkAlarms:  make(map[string]time.Time),
-	AllAlarms:      make(map[string]map[string]time.Time),
-	flappingAlarms: make(map[string]map[string]time.Time),
-	notifyMux:      sync.RWMutex{},
-}
+var alarms = newAlarmCache()
 
-func shouldNotify(msg *alertMsg, dest notifyDest) bool {
-	alarms.notifyMux.Lock()
-	defer alarms.notifyMux.Unlock()
-	var whichMap map[string]time.Time
-	var service string
-	if alarms.AllAlarms[msg.chain] == nil {
-		alarms.AllAlarms[msg.chain] = make(map[string]time.Time)
-	}
+func (a *alarmCache) sentMapLocked(dest notifyDest) map[string]time.Time {
 	switch dest {
 	case pd:
-		whichMap = alarms.SentPdAlarms
-		service = "PagerDuty"
+		if a.SentPdAlarms == nil {
+			a.SentPdAlarms = make(map[string]time.Time)
+		}
+		return a.SentPdAlarms
 	case tg:
-		whichMap = alarms.SentTgAlarms
-		service = "Telegram"
+		if a.SentTgAlarms == nil {
+			a.SentTgAlarms = make(map[string]time.Time)
+		}
+		return a.SentTgAlarms
 	case di:
-		whichMap = alarms.SentDiAlarms
-		service = "Discord"
+		if a.SentDiAlarms == nil {
+			a.SentDiAlarms = make(map[string]time.Time)
+		}
+		return a.SentDiAlarms
 	case slk:
-		whichMap = alarms.SentSlkAlarms
-		service = "Slack"
+		if a.SentSlkAlarms == nil {
+			a.SentSlkAlarms = make(map[string]time.Time)
+		}
+		return a.SentSlkAlarms
+	default:
+		panic("unknown notification destination")
 	}
+}
 
-	switch {
-	case !whichMap[msg.message].IsZero() && !msg.resolved:
-		// already sent this alert
+func (a *alarmCache) reserveDelivery(msg *alertMsg, dest notifyDest) bool {
+	a.notifyMux.Lock()
+	defer a.notifyMux.Unlock()
+	sent := a.sentMapLocked(dest)
+	if a.inFlight == nil {
+		a.inFlight = make(map[notifyDest]map[string]struct{})
+	}
+	if a.inFlight[dest] == nil {
+		a.inFlight[dest] = make(map[string]struct{})
+	}
+	if _, reserved := a.inFlight[dest][msg.message]; reserved {
 		return false
-	case !whichMap[msg.message].IsZero() && msg.resolved:
-		// alarm is cleared
-		delete(whichMap, msg.message)
-		l(fmt.Sprintf("💜 Resolved     alarm on %s (%s) - notifying %s", msg.chain, msg.message, service))
-		return true
-	case msg.resolved:
-		// it looks like we got a duplicate resolution or suppressed it. Note it and move on:
-		l(fmt.Sprintf("😕 Not clearing alarm on %s (%s) - no corresponding alert %s", msg.chain, msg.message, service))
+	}
+	if msg.resolved {
+		if sent[msg.message].IsZero() {
+			return false
+		}
+	} else if !sent[msg.message].IsZero() {
 		return false
 	}
-
-	// check if the alarm is flapping, if we sent the same alert in the last five minutes, show a warning but don't alert
-	if alarms.flappingAlarms[msg.chain] == nil {
-		alarms.flappingAlarms[msg.chain] = make(map[string]time.Time)
+	if dest == pd && !msg.resolved {
+		if a.flappingAlarms == nil {
+			a.flappingAlarms = make(map[string]map[string]time.Time)
+		}
+		if a.flappingAlarms[msg.chain] != nil && a.flappingAlarms[msg.chain][msg.message].After(time.Now().Add(-5*time.Minute)) {
+			return false
+		}
 	}
-
-	// for pagerduty we perform some basic flap detection
-	if dest == pd && msg.pd && alarms.flappingAlarms[msg.chain][msg.message].After(time.Now().Add(-5*time.Minute)) {
-		l("🛑 flapping detected - suppressing pagerduty notification:", msg.chain, msg.message)
-		return false
-	} else if dest == pd && msg.pd {
-		alarms.flappingAlarms[msg.chain][msg.message] = time.Now()
-	}
-
-	l(fmt.Sprintf("🚨 ALERT        new alarm on %s (%s) - notifying %s", msg.chain, msg.message, service))
-	whichMap[msg.message] = time.Now()
+	a.inFlight[dest][msg.message] = struct{}{}
 	return true
 }
 
-func notifySlack(msg *alertMsg) (err error) {
-	if !msg.slk {
+func (a *alarmCache) completeDelivery(msg *alertMsg, dest notifyDest, accepted bool) {
+	a.notifyMux.Lock()
+	defer a.notifyMux.Unlock()
+	if a.inFlight != nil && a.inFlight[dest] != nil {
+		delete(a.inFlight[dest], msg.message)
+	}
+	if !accepted {
 		return
 	}
+	sent := a.sentMapLocked(dest)
+	if msg.resolved {
+		delete(sent, msg.message)
+		return
+	}
+	now := time.Now()
+	sent[msg.message] = now
+	if dest == pd {
+		if a.flappingAlarms == nil {
+			a.flappingAlarms = make(map[string]map[string]time.Time)
+		}
+		if a.flappingAlarms[msg.chain] == nil {
+			a.flappingAlarms[msg.chain] = make(map[string]time.Time)
+		}
+		a.flappingAlarms[msg.chain][msg.message] = now
+	}
+}
+
+type NotificationTransportError struct {
+	Destination string
+	cause       error
+}
+
+func (e *NotificationTransportError) Error() string {
+	return fmt.Sprintf("%s notification transport failed", e.Destination)
+}
+
+func (e *NotificationTransportError) Unwrap() error {
+	return e.cause
+}
+
+type NotificationAPIError struct {
+	Destination string
+	cause       error
+}
+
+func (e *NotificationAPIError) Error() string {
+	return fmt.Sprintf("%s notification rejected by remote API", e.Destination)
+}
+
+func (e *NotificationAPIError) Unwrap() error {
+	return e.cause
+}
+
+type NotificationHTTPError struct {
+	Destination string
+	StatusCode  int
+}
+
+func (e *NotificationHTTPError) Error() string {
+	return fmt.Sprintf("%s notification rejected with HTTP status %d", e.Destination, e.StatusCode)
+}
+
+type notificationSender struct {
+	cache             *alarmCache
+	httpClient        *http.Client
+	telegramEndpoint  string
+	pagerDutyEndpoint string
+	sleep             func(time.Duration)
+	observe           func(string, string)
+}
+
+const (
+	notificationAttemptTimeout = 5 * time.Second
+	notificationQueueCapacity  = 64
+	pagerDutyMaxAttempts       = 2
+	pagerDutyRetryDelay        = 250 * time.Millisecond
+	deliveryAccepted           = "accepted"
+	deliveryRejected           = "rejected"
+	deliveryTransportError     = "transport_error"
+)
+
+func newNotificationSender(cache *alarmCache, client *http.Client) *notificationSender {
+	if cache == nil {
+		cache = newAlarmCache()
+	}
+	if client == nil {
+		client = &http.Client{}
+	}
+	boundedClient := *client
+	boundedClient.Timeout = notificationAttemptTimeout
+	return &notificationSender{
+		cache:            cache,
+		httpClient:       &boundedClient,
+		telegramEndpoint: tgbotapi.APIEndpoint,
+		sleep:            time.Sleep,
+		observe:          observeNotificationDelivery,
+	}
+}
+
+var notifications = newNotificationSender(alarms, nil)
+
+func (s *notificationSender) observeError(destination string, err error) error {
+	outcome := deliveryTransportError
+	var httpErr *NotificationHTTPError
+	var apiErr *NotificationAPIError
+	if errors.As(err, &httpErr) || errors.As(err, &apiErr) {
+		outcome = deliveryRejected
+	}
+	if s.observe != nil {
+		s.observe(destination, outcome)
+	}
+	return err
+}
+
+func (s *notificationSender) observeAccepted(destination string) {
+	if s.observe != nil {
+		s.observe(destination, deliveryAccepted)
+	}
+}
+
+func notifySlack(msg *alertMsg) error {
+	return notifications.notifySlack(msg)
+}
+
+func (s *notificationSender) notifySlack(msg *alertMsg) (err error) {
+	if !msg.slk {
+		return nil
+	}
+	if !s.cache.reserveDelivery(msg, slk) {
+		return nil
+	}
+	accepted := false
+	defer func() { s.cache.completeDelivery(msg, slk, accepted) }()
+
 	data, err := json.Marshal(buildSlackMessage(msg))
 	if err != nil {
-		return
+		return s.observeError("slack", &NotificationTransportError{Destination: "slack", cause: err})
 	}
-
-	req, err := http.NewRequest("POST", msg.slkHook, bytes.NewBuffer(data))
+	ctx, cancel := context.WithTimeout(context.Background(), notificationAttemptTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, msg.slkHook, bytes.NewBuffer(data))
 	if err != nil {
-		return
+		return s.observeError("slack", &NotificationTransportError{Destination: "slack", cause: err})
 	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return
+		return s.observeError("slack", &NotificationTransportError{Destination: "slack", cause: err})
 	}
-	_ = resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("could not notify slack for %s got %d response", msg.chain, resp.StatusCode)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return s.observeError("slack", &NotificationHTTPError{Destination: "slack", StatusCode: resp.StatusCode})
 	}
-
-	return
+	accepted = true
+	s.observeAccepted("slack")
+	return nil
 }
 
 type SlackMessage struct {
@@ -216,40 +371,41 @@ func buildSlackMessage(msg *alertMsg) *SlackMessage {
 	}
 }
 
-func notifyDiscord(msg *alertMsg) (err error) {
+func notifyDiscord(msg *alertMsg) error {
+	return notifications.notifyDiscord(msg)
+}
+
+func (s *notificationSender) notifyDiscord(msg *alertMsg) (err error) {
 	if !msg.disc {
 		return nil
 	}
-	if !shouldNotify(msg, di) {
+	if !s.cache.reserveDelivery(msg, di) {
 		return nil
 	}
-	discPost := buildDiscordMessage(msg)
-	client := &http.Client{}
-	data, err := json.MarshalIndent(discPost, "", "  ")
-	if err != nil {
-		l("⚠️ Could not notify discord!", err)
-		return err
-	}
+	accepted := false
+	defer func() { s.cache.completeDelivery(msg, di, accepted) }()
 
-	req, err := http.NewRequest("POST", msg.discHook, bytes.NewBuffer(data))
+	data, err := json.MarshalIndent(buildDiscordMessage(msg), "", "  ")
 	if err != nil {
-		l("⚠️ Could not notify discord!", err)
-		return err
+		return s.observeError("discord", &NotificationTransportError{Destination: "discord", cause: err})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), notificationAttemptTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, msg.discHook, bytes.NewBuffer(data))
+	if err != nil {
+		return s.observeError("discord", &NotificationTransportError{Destination: "discord", cause: err})
 	}
 	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		l("⚠️ Could not notify discord!", err)
-		return err
+		return s.observeError("discord", &NotificationTransportError{Destination: "discord", cause: err})
 	}
-	_ = resp.Body.Close()
-
-	if resp.StatusCode != 204 {
-		log.Println(resp)
-		l("⚠️ Could not notify discord! Returned", resp.StatusCode)
-		return err
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return s.observeError("discord", &NotificationHTTPError{Destination: "discord", StatusCode: resp.StatusCode})
 	}
+	accepted = true
+	s.observeAccepted("discord")
 	return nil
 }
 
@@ -289,25 +445,53 @@ func buildTelegramText(msg *alertMsg) string {
 	return fmt.Sprintf("%s %s: %s - %s", BrandName, msg.chain, prefix, msg.message)
 }
 
-func notifyTg(msg *alertMsg) (err error) {
+type contextHTTPClient struct {
+	ctx    context.Context
+	client *http.Client
+}
+
+func (c contextHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	//#nosec G704 -- production requests are constructed by the Telegram client
+	// from its fixed API endpoint; tests replace that package-private endpoint.
+	return c.client.Do(req.WithContext(c.ctx))
+}
+
+func notifyTg(msg *alertMsg) error {
+	return notifications.notifyTelegram(msg)
+}
+
+func (s *notificationSender) notifyTelegram(msg *alertMsg) (err error) {
 	if !msg.tg {
 		return nil
 	}
-	if !shouldNotify(msg, tg) {
+	if !s.cache.reserveDelivery(msg, tg) {
 		return nil
 	}
-	bot, err := tgbotapi.NewBotAPI(msg.tgKey)
-	if err != nil {
-		l("notify telegram:", err)
-		return
-	}
+	accepted := false
+	defer func() { s.cache.completeDelivery(msg, tg, accepted) }()
 
-	mc := tgbotapi.NewMessageToChannel(msg.tgChannel, buildTelegramText(msg))
-	_, err = bot.Send(mc)
+	ctx, cancel := context.WithTimeout(context.Background(), notificationAttemptTimeout)
+	defer cancel()
+	client := contextHTTPClient{ctx: ctx, client: s.httpClient}
+	bot, err := tgbotapi.NewBotAPIWithClient(msg.tgKey, s.telegramEndpoint, client)
 	if err != nil {
-		l("telegram send:", err)
+		return s.observeError("telegram", classifyTelegramError(err))
 	}
-	return err
+	mc := tgbotapi.NewMessageToChannel(msg.tgChannel, buildTelegramText(msg))
+	if _, err = bot.Send(mc); err != nil {
+		return s.observeError("telegram", classifyTelegramError(err))
+	}
+	accepted = true
+	s.observeAccepted("telegram")
+	return nil
+}
+
+func classifyTelegramError(err error) error {
+	var apiErr *tgbotapi.Error
+	if errors.As(err, &apiErr) {
+		return &NotificationAPIError{Destination: "telegram", cause: err}
+	}
+	return &NotificationTransportError{Destination: "telegram", cause: err}
 }
 
 func buildPagerDutyEvent(msg *alertMsg) pagerduty.V2Event {
@@ -327,22 +511,58 @@ func buildPagerDutyEvent(msg *alertMsg) pagerduty.V2Event {
 	}
 }
 
-func notifyPagerduty(msg *alertMsg) (err error) {
+func notifyPagerduty(msg *alertMsg) error {
+	return notifications.notifyPagerDuty(msg)
+}
+
+func (s *notificationSender) notifyPagerDuty(msg *alertMsg) (err error) {
 	if !msg.pd {
 		return nil
 	}
-	if !shouldNotify(msg, pd) {
-		return nil
-	}
-	// key from the example, don't spam their api
+	// key from the example, don't spam their API
 	if msg.key == "aaaaaaaaaaaabbbbbbbbbbbbbcccccccccccc" {
 		l("invalid pagerduty key")
-		return
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_, err = pagerduty.ManageEventWithContext(ctx, buildPagerDutyEvent(msg))
-	return
+	if !s.cache.reserveDelivery(msg, pd) {
+		return nil
+	}
+	accepted := false
+	defer func() { s.cache.completeDelivery(msg, pd, accepted) }()
+
+	var lastErr error
+	for attempt := 1; attempt <= pagerDutyMaxAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), notificationAttemptTimeout)
+		client := pagerduty.NewClient("")
+		if s.pagerDutyEndpoint != "" {
+			client = pagerduty.NewClient("", pagerduty.WithV2EventsAPIEndpoint(s.pagerDutyEndpoint))
+		}
+		client.HTTPClient = s.httpClient
+		_, sendErr := client.ManageEventWithContext(ctx, ptrPagerDutyEvent(buildPagerDutyEvent(msg)))
+		cancel()
+		if sendErr == nil {
+			accepted = true
+			s.observeAccepted("pagerduty")
+			return nil
+		}
+		lastErr = s.observeError("pagerduty", classifyPagerDutyError(sendErr))
+		if attempt < pagerDutyMaxAttempts {
+			s.sleep(pagerDutyRetryDelay)
+		}
+	}
+	return lastErr
+}
+
+func ptrPagerDutyEvent(event pagerduty.V2Event) *pagerduty.V2Event {
+	return &event
+}
+
+func classifyPagerDutyError(err error) error {
+	var apiErr pagerduty.APIError
+	if errors.As(err, &apiErr) {
+		return &NotificationAPIError{Destination: "pagerduty", cause: err}
+	}
+	return &NotificationTransportError{Destination: "pagerduty", cause: err}
 }
 
 func getAlarms(chain string) string {
@@ -361,31 +581,32 @@ func getAlarms(chain string) string {
 
 // alert creates a universal alert and pushes it to the alertChan to be delivered to appropriate services
 func (c *Config) alert(chainName, message, severity string, resolved bool, id *string) {
-	uniq := c.Chains[chainName].ValAddress
+	c.chainsMux.RLock()
+	chain := c.Chains[chainName]
+	uniq := chain.ValAddress
 	if id != nil {
 		uniq = *id
 	}
-	c.chainsMux.RLock()
 	a := &alertMsg{
-		pd:           c.Pagerduty.Enabled && c.Chains[chainName].Alerts.Pagerduty.Enabled,
-		disc:         c.Discord.Enabled && c.Chains[chainName].Alerts.Discord.Enabled,
-		tg:           c.Telegram.Enabled && c.Chains[chainName].Alerts.Telegram.Enabled,
-		slk:          c.Slack.Enabled && c.Chains[chainName].Alerts.Slack.Enabled,
+		pd:           c.Pagerduty.Enabled && chain.Alerts.Pagerduty.Enabled,
+		disc:         c.Discord.Enabled && chain.Alerts.Discord.Enabled,
+		tg:           c.Telegram.Enabled && chain.Alerts.Telegram.Enabled,
+		slk:          c.Slack.Enabled && chain.Alerts.Slack.Enabled,
 		severity:     severity,
 		resolved:     resolved,
 		chain:        chainName,
 		message:      message,
 		uniqueId:     uniq,
-		key:          c.Chains[chainName].Alerts.Pagerduty.ApiKey,
-		tgChannel:    c.Chains[chainName].Alerts.Telegram.Channel,
-		tgKey:        c.Chains[chainName].Alerts.Telegram.ApiKey,
-		tgMentions:   strings.Join(c.Chains[chainName].Alerts.Telegram.Mentions, " "),
-		discHook:     c.Chains[chainName].Alerts.Discord.Webhook,
-		discMentions: strings.Join(c.Chains[chainName].Alerts.Discord.Mentions, " "),
-		slkHook:      c.Chains[chainName].Alerts.Slack.Webhook,
+		key:          chain.Alerts.Pagerduty.ApiKey,
+		tgChannel:    chain.Alerts.Telegram.Channel,
+		tgKey:        chain.Alerts.Telegram.ApiKey,
+		tgMentions:   strings.Join(chain.Alerts.Telegram.Mentions, " "),
+		discHook:     chain.Alerts.Discord.Webhook,
+		discMentions: strings.Join(chain.Alerts.Discord.Mentions, " "),
+		slkHook:      chain.Alerts.Slack.Webhook,
 	}
-	c.alertChan <- a
 	c.chainsMux.RUnlock()
+	c.alertChan <- a
 	alarms.notifyMux.Lock()
 	defer alarms.notifyMux.Unlock()
 	if alarms.AllAlarms[chainName] == nil {
@@ -400,11 +621,100 @@ func (c *Config) alert(chainName, message, severity string, resolved bool, id *s
 	alarms.AllAlarms[chainName][message] = time.Now()
 }
 
+func (cc *ChainConfig) checkStalledAlert(now time.Time) {
+	resolved := false
+	cc.alertStateMux.Lock()
+	switch {
+	case cc.Alerts.StalledAlerts && !cc.lastBlockAlarm && !cc.lastBlockTime.IsZero() &&
+		cc.lastBlockTime.Before(now.Add(time.Duration(-cc.Alerts.Stalled)*time.Minute)):
+		cc.lastBlockAlarm = true
+	case cc.Alerts.StalledAlerts && cc.lastBlockAlarm && cc.stalledResolutionPending:
+		cc.lastBlockAlarm = false
+		cc.stalledResolutionPending = false
+		resolved = true
+	default:
+		cc.alertStateMux.Unlock()
+		return
+	}
+	cc.alertStateMux.Unlock()
+
+	severity := "critical"
+	if resolved {
+		severity = "info"
+	}
+	td.alert(
+		cc.name,
+		fmt.Sprintf("stalled: have not seen a new block on %s in %d minutes", cc.ChainId, cc.Alerts.Stalled),
+		severity,
+		resolved,
+		&cc.valInfo.Valcons,
+	)
+	if resolved {
+		alarms.clearNoBlocks(cc.name)
+	}
+}
+
+// recordFinalBlock preserves an active stalled alarm until the watch loop has
+// emitted its matching resolution. It returns the previous finalized block time.
+func (cc *ChainConfig) recordFinalBlock(now time.Time) time.Time {
+	cc.alertStateMux.Lock()
+	defer cc.alertStateMux.Unlock()
+	previous := cc.lastBlockTime
+	cc.lastBlockTime = now
+	if cc.lastBlockAlarm {
+		cc.stalledResolutionPending = true
+	}
+	return previous
+}
+
+func (cc *ChainConfig) lastFinalBlockTime() time.Time {
+	cc.alertStateMux.Lock()
+	defer cc.alertStateMux.Unlock()
+	return cc.lastBlockTime
+}
+
+func (cc *ChainConfig) checkPercentageAlert() {
+	cc.alertStateMux.Lock()
+	if !cc.Alerts.PercentageAlerts || cc.valInfo == nil || cc.valInfo.Window == 0 {
+		cc.alertStateMux.Unlock()
+		return
+	}
+	percentMissed := 100 * float64(cc.valInfo.Missed) / float64(cc.valInfo.Window)
+	resolved := false
+	switch {
+	case !cc.percentageAlarm && percentMissed > float64(cc.Alerts.Window):
+		cc.percentageAlarm = true
+	case cc.percentageAlarm && percentMissed < float64(cc.Alerts.Window):
+		cc.percentageAlarm = false
+		resolved = true
+	default:
+		cc.alertStateMux.Unlock()
+		return
+	}
+	moniker := cc.valInfo.Moniker
+	valcons := cc.valInfo.Valcons
+	cc.alertStateMux.Unlock()
+
+	severity := cc.Alerts.PercentagePriority
+	if resolved {
+		severity = "info"
+	}
+	id := valcons + "percent"
+	td.alert(
+		cc.name,
+		fmt.Sprintf("%s has missed > %d%% of the slashing window's blocks on %s", moniker, cc.Alerts.Window, cc.ChainId),
+		severity,
+		resolved,
+		&id,
+	)
+	cc.activeAlerts = alarms.getCount(cc.name)
+}
+
 // watch handles monitoring for missed blocks, stalled chain, node downtime
 // and also updates a few prometheus stats
 // FIXME: not watching for nodes that are lagging the head block!
 func (cc *ChainConfig) watch() {
-	var missedAlarm, pctAlarm, noNodes bool
+	var missedAlarm, noNodes bool
 	inactive := "jailed"
 	nodeAlarms := make(map[string]bool)
 
@@ -473,29 +783,7 @@ func (cc *ChainConfig) watch() {
 		}
 
 		// stalled chain detection
-		if cc.Alerts.StalledAlerts && !cc.lastBlockAlarm && !cc.lastBlockTime.IsZero() &&
-			cc.lastBlockTime.Before(time.Now().Add(time.Duration(-cc.Alerts.Stalled)*time.Minute)) {
-
-			// chain is stalled send an alert!
-			cc.lastBlockAlarm = true
-			td.alert(
-				cc.name,
-				fmt.Sprintf("stalled: have not seen a new block on %s in %d minutes", cc.ChainId, cc.Alerts.Stalled),
-				"critical",
-				false,
-				&cc.valInfo.Valcons,
-			)
-		} else if cc.Alerts.StalledAlerts && cc.lastBlockAlarm && cc.lastBlockTime.IsZero() {
-			cc.lastBlockAlarm = false
-			td.alert(
-				cc.name,
-				fmt.Sprintf("stalled: have not seen a new block on %s in %d minutes", cc.ChainId, cc.Alerts.Stalled),
-				"info",
-				true,
-				&cc.valInfo.Valcons,
-			)
-			alarms.clearNoBlocks(cc.name)
-		}
+		cc.checkStalledAlert(time.Now())
 
 		// jailed detection - only alert if it changes.
 		if cc.Alerts.AlertIfInactive && cc.lastValInfo != nil && cc.lastValInfo.Bonded != cc.valInfo.Bonded &&
@@ -554,31 +842,7 @@ func (cc *ChainConfig) watch() {
 		}
 
 		// window percentage missed block alarms
-		if cc.Alerts.PercentageAlerts && !pctAlarm && 100*float64(cc.valInfo.Missed)/float64(cc.valInfo.Window) > float64(cc.Alerts.Window) {
-			// alert on missed block counter!
-			pctAlarm = true
-			id := cc.valInfo.Valcons + "percent"
-			td.alert(
-				cc.name,
-				fmt.Sprintf("%s has missed > %d%% of the slashing window's blocks on %s", cc.valInfo.Moniker, cc.Alerts.Window, cc.ChainId),
-				cc.Alerts.PercentagePriority,
-				false,
-				&id,
-			)
-			cc.activeAlerts = alarms.getCount(cc.name)
-		} else if cc.Alerts.PercentageAlerts && pctAlarm && 100*float64(cc.valInfo.Missed)/float64(cc.valInfo.Window) < float64(cc.Alerts.Window) {
-			// clear the alert
-			pctAlarm = false
-			id := cc.valInfo.Valcons + "percent"
-			td.alert(
-				cc.name,
-				fmt.Sprintf("%s has missed > %d%% of the slashing window's blocks on %s", cc.valInfo.Moniker, cc.Alerts.Window, cc.ChainId),
-				"info",
-				false,
-				&id,
-			)
-			cc.activeAlerts = alarms.getCount(cc.name)
-		}
+		cc.checkPercentageAlert()
 
 		// node down alarms
 		for _, node := range cc.Nodes {
@@ -616,7 +880,7 @@ func (cc *ChainConfig) watch() {
 
 		if td.Prom {
 			// raw block timer, ignoring finalized state
-			td.statsChan <- cc.mkUpdate(metricLastBlockSecondsNotFinal, time.Since(cc.lastBlockTime).Seconds(), "")
+			td.statsChan <- cc.mkUpdate(metricLastBlockSecondsNotFinal, time.Since(cc.lastFinalBlockTime()).Seconds(), "")
 			// update node-down times for prometheus
 			for _, node := range cc.Nodes {
 				if node.down && !node.downSince.IsZero() {

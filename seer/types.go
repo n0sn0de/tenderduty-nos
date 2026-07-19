@@ -83,18 +83,21 @@ type savedState struct {
 // ChainConfig represents a validator to be monitored on a chain, it is somewhat of a misnomer since multiple
 // validators can be monitored on a single chain.
 type ChainConfig struct {
-	name           string
-	wsclient       *TmConn       // custom websocket client to work around wss:// bugs in tendermint
-	client         *rpchttp.HTTP // legit tendermint client
-	noNodes        bool          // tracks if all nodes are down
-	valInfo        *ValInfo      // recent validator state, only refreshed every few minutes
-	lastValInfo    *ValInfo      // use for detecting newly-jailed/tombstone
-	blocksResults  []int
-	lastError      string
-	lastBlockTime  time.Time
-	lastBlockAlarm bool
-	lastBlockNum   int64
-	activeAlerts   int
+	name                     string
+	wsclient                 *TmConn       // custom websocket client to work around wss:// bugs in tendermint
+	client                   *rpchttp.HTTP // legit tendermint client
+	noNodes                  bool          // tracks if all nodes are down
+	valInfo                  *ValInfo      // recent validator state, only refreshed every few minutes
+	lastValInfo              *ValInfo      // use for detecting newly-jailed/tombstone
+	blocksResults            []int
+	lastError                string
+	lastBlockTime            time.Time
+	lastBlockAlarm           bool
+	stalledResolutionPending bool
+	percentageAlarm          bool
+	alertStateMux            sync.Mutex
+	lastBlockNum             int64
+	activeAlerts             int
 
 	statTotalSigns      float64
 	statTotalProps      float64
@@ -479,7 +482,7 @@ func loadConfig(yamlFile, stateFile, chainConfigDirectory string, password *stri
 		return nil, errors.New("no chains configured")
 	}
 
-	c.alertChan = make(chan *alertMsg)
+	c.alertChan = make(chan *alertMsg, notificationQueueCapacity)
 	c.logChan = make(chan dash.LogMessage)
 	// buffer enough to get through validateConfig()
 	c.updateChan = make(chan *dash.ChainStatus, len(c.Chains)*2)

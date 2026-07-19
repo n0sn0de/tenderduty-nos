@@ -1,11 +1,13 @@
 package seer
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -13,6 +15,38 @@ import (
 )
 
 var td = &Config{}
+
+func notificationWorker(ctx context.Context, alerts <-chan *alertMsg, deliver func(*alertMsg)) {
+	for {
+		select {
+		case alert, ok := <-alerts:
+			if !ok {
+				return
+			}
+			deliver(alert)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func deliverAlert(msg *alertMsg) {
+	deliveries := []func() error{
+		func() error { return notifyPagerduty(msg) },
+		func() error { return notifyDiscord(msg) },
+		func() error { return notifyTg(msg) },
+		func() error { return notifySlack(msg) },
+	}
+	var workers sync.WaitGroup
+	workers.Add(len(deliveries))
+	for _, deliver := range deliveries {
+		go func() {
+			defer workers.Done()
+			_ = deliver()
+		}()
+	}
+	workers.Wait()
+}
 
 func Run(configFile, stateFile, chainConfigDirectory string, password *string) error {
 	var err error
@@ -31,34 +65,7 @@ func Run(configFile, stateFile, chainConfigDirectory string, password *string) e
 
 	defer td.cancel()
 
-	go func() {
-		for {
-			select {
-			case alert := <-td.alertChan:
-				go func(msg *alertMsg) {
-					var e error
-					e = notifyPagerduty(msg)
-					if e != nil {
-						l(msg.chain, "error sending alert to pagerduty", e.Error())
-					}
-					e = notifyDiscord(msg)
-					if e != nil {
-						l(msg.chain, "error sending alert to discord", e.Error())
-					}
-					e = notifyTg(msg)
-					if e != nil {
-						l(msg.chain, "error sending alert to telegram", e.Error())
-					}
-					e = notifySlack(msg)
-					if e != nil {
-						l(msg.chain, "error sending alert to slack", e.Error())
-					}
-				}(alert)
-			case <-td.ctx.Done():
-				return
-			}
-		}
-	}()
+	go notificationWorker(td.ctx, td.alertChan, deliverAlert)
 
 	if td.EnableDash {
 		go dash.Serve(td.Listen, td.updateChan, td.logChan, td.HideLogs)

@@ -116,11 +116,11 @@ func (cc *ChainConfig) WsRun() {
 				}
 				if update.Final {
 					cc.lastBlockNum = update.Height
+					now := time.Now()
+					previousBlockTime := cc.recordFinalBlock(now)
 					if td.Prom {
-						td.statsChan <- cc.mkUpdate(metricLastBlockSeconds, time.Since(cc.lastBlockTime).Seconds(), "")
+						td.statsChan <- cc.mkUpdate(metricLastBlockSeconds, now.Sub(previousBlockTime).Seconds(), "")
 					}
-					cc.lastBlockTime = time.Now()
-					cc.lastBlockAlarm = false
 					info := getAlarms(cc.name)
 					cc.blocksResults = append([]int{int(signState)}, cc.blocksResults[:len(cc.blocksResults)-1]...)
 					if signState < 3 && cc.valInfo.Bonded {
