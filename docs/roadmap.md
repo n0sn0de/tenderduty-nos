@@ -36,7 +36,13 @@ The exact blocker is the current Cosmos SDK `v0.45.11` / Tendermint `v0.34.24` c
 - define release/version policy and migration support window;
 - reproducible multi-architecture images with SBOM, provenance, signatures, and digest-pinned bases;
 - restore publication workflows only after non-publishing builds and permissions are reviewed;
-- release notes generated from tested compatibility changes.
+- release notes generated from tested compatibility changes;
+- reconcile the documented historical comparison SHA with the repository's imported Git ancestry before claiming cryptographic lineage provenance.
+
+The root MIT license and source attribution remain unchanged. The current provenance
+page records the foundation's reviewed content comparison, but the imported Git
+history does not itself prove ancestry to that upstream SHA; that legacy P3 audit
+is intentionally separate from this runtime/state repair.
 
 ## Phase 5 — committee visual integration
 

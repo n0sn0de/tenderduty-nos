@@ -28,12 +28,12 @@ type ValInfo struct {
 	Valcons    string `json:"valcons"`
 }
 
-// GetValInfo the first bool is used to determine if extra information about the validator should be printed.
-func (cc *ChainConfig) GetValInfo(first bool) (err error) {
+// GetValInfo refreshes validator data. The first bool controls startup-only detail logging.
+func (cc *ChainConfig) GetValInfo(parent context.Context, first bool) (err error) {
 	if cc.client == nil {
 		return errors.New("nil rpc client")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
 	if cc.valInfo == nil {
@@ -107,7 +107,7 @@ func (cc *ChainConfig) GetValInfo(first bool) (err error) {
 	}
 	cc.valInfo.Missed = slash.ValSigningInfo.MissedBlocksCounter
 	if td.Prom {
-		td.statsChan <- cc.mkUpdate(metricWindowMissed, float64(cc.valInfo.Missed), "")
+		td.emitStat(ctx, cc.mkUpdate(metricWindowMissed, float64(cc.valInfo.Missed), ""))
 	}
 
 	// finally get the signed blocks window
@@ -131,8 +131,8 @@ func (cc *ChainConfig) GetValInfo(first bool) (err error) {
 			return
 		}
 		if first && td.Prom {
-			td.statsChan <- cc.mkUpdate(metricWindowSize, float64(params.Params.SignedBlocksWindow), "")
-			td.statsChan <- cc.mkUpdate(metricTotalNodes, float64(len(cc.Nodes)), "")
+			td.emitStat(ctx, cc.mkUpdate(metricWindowSize, float64(params.Params.SignedBlocksWindow), ""))
+			td.emitStat(ctx, cc.mkUpdate(metricTotalNodes, float64(len(cc.Nodes)), ""))
 		}
 		cc.valInfo.Window = params.Params.SignedBlocksWindow
 	}

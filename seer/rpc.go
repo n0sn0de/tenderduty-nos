@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sync"
 	"time"
 
 	dash "github.com/n0sn0de/tenderduty-nos/seer/dashboard"
@@ -15,76 +16,78 @@ import (
 )
 
 // newRpc sets up the rpc client used for monitoring. It will try nodes in order until a working node is found.
-// it will also get some initial info on the validator's status.
-func (cc *ChainConfig) newRpc() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// It never holds the durable-state lock while performing network I/O.
+func (cc *ChainConfig) newRpc(parent context.Context) error {
+	cc.rpcMux.Lock()
+	defer cc.rpcMux.Unlock()
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
-	var anyWorking bool // if healthchecks are running, we will skip to the first known good node.
+
+	var anyWorking bool
 	for _, endpoint := range cc.Nodes {
-		anyWorking = anyWorking || !endpoint.down
+		anyWorking = anyWorking || !cc.nodeState(endpoint).down
 	}
-	// grab the first working endpoint
-	tryUrl := func(u string) (msg string, down, syncing bool) {
-		_, err := url.Parse(u)
-		if err != nil {
-			msg = fmt.Sprintf("❌ could not parse url %s: (%s) %s", cc.name, u, err)
+	tryURL := func(endpointURL string) (client *rpchttp.HTTP, msg string, down, syncing bool) {
+		if _, err := url.Parse(endpointURL); err != nil {
+			msg = fmt.Sprintf("❌ could not parse url %s: (%s) %s", cc.name, endpointURL, err)
 			l(msg)
-			down = true
-			return
+			return nil, msg, true, false
 		}
-		cc.client, err = rpchttp.New(u, "/websocket")
+		candidate, err := rpchttp.New(endpointURL, "/websocket")
 		if err != nil {
-			msg = fmt.Sprintf("❌ could not connect client for %s: (%s) %s", cc.name, u, err)
+			msg = fmt.Sprintf("❌ could not connect client for %s: (%s) %s", cc.name, endpointURL, err)
 			l(msg)
-			down = true
-			return
+			return nil, msg, true, false
 		}
-		status, err := cc.client.Status(ctx)
+		status, err := candidate.Status(ctx)
 		if err != nil {
-			msg = fmt.Sprintf("❌ could not get status for %s: (%s) %s", cc.name, u, err)
-			down = true
+			msg = fmt.Sprintf("❌ could not get status for %s: (%s) %s", cc.name, endpointURL, err)
 			l(msg)
-			return
+			return nil, msg, true, false
 		}
 		if status.NodeInfo.Network != cc.ChainId {
-			msg = fmt.Sprintf("chain id %s on %s does not match, expected %s, skipping", status.NodeInfo.Network, u, cc.ChainId)
-			down = true
+			msg = fmt.Sprintf("chain id %s on %s does not match, expected %s, skipping", status.NodeInfo.Network, endpointURL, cc.ChainId)
 			l(msg)
-			return
+			return nil, msg, true, false
 		}
 		if status.SyncInfo.CatchingUp {
-			msg = fmt.Sprint("🐢 node is not synced, skipping ", u)
-			syncing = true
-			down = true
+			msg = fmt.Sprint("🐢 node is not synced, skipping ", endpointURL)
 			l(msg)
-			return
+			return nil, msg, true, true
 		}
-		cc.noNodes = false
-		return
+		return candidate, "", false, false
 	}
-	down := func(endpoint *NodeConfig, msg string) {
-		if !endpoint.down {
-			endpoint.down = true
-			endpoint.downSince = time.Now()
-		}
-		endpoint.lastMsg = msg
+	markDown := func(endpoint *NodeConfig, message string, syncing bool) {
+		cc.updateNodeState(endpoint, func(state *nodeRuntimeState) {
+			if !state.down {
+				state.down = true
+				state.downSince = time.Now()
+			}
+			state.syncing = syncing
+			state.lastMsg = message
+		})
 	}
+
 	for _, endpoint := range cc.Nodes {
-		if anyWorking && endpoint.down {
+		if anyWorking && cc.nodeState(endpoint).down {
 			continue
 		}
-		if msg, failed, syncing := tryUrl(endpoint.Url); failed {
-			endpoint.syncing = syncing
-			down(endpoint, msg)
+		client, message, failed, syncing := tryURL(endpoint.Url)
+		if failed {
+			markDown(endpoint, message, syncing)
 			continue
 		}
+		cc.client = client
+		cc.setNoNodes(false)
 		return nil
 	}
 	if cc.PublicFallback {
-		if u, ok := getRegistryUrl(cc.ChainId); ok {
-			node := guessPublicEndpoint(u)
+		if registryURL, ok := getRegistryUrl(cc.ChainId); ok {
+			node := guessPublicEndpointContext(ctx, registryURL)
 			l(cc.ChainId, "⛑ attemtping to use public fallback node", node)
-			if _, kk, _ := tryUrl(node); !kk {
+			if client, _, failed, _ := tryURL(node); !failed {
+				cc.client = client
+				cc.setNoNodes(false)
 				l(cc.ChainId, "⛑ connected to public endpoint", node)
 				return nil
 			}
@@ -92,8 +95,8 @@ func (cc *ChainConfig) newRpc() error {
 			l("could not find a public endpoint for", cc.ChainId)
 		}
 	}
-	cc.noNodes = true
-	alarms.clearAll(cc.name)
+	cc.setNoNodes(true)
+	cc.activeAlerts = td.alarmState().getCount(cc.name)
 	cc.lastError = "no usable RPC endpoints available for " + cc.ChainId
 	if td.EnableDash {
 		td.updateChan <- &dash.ChainStatus{
@@ -108,10 +111,10 @@ func (cc *ChainConfig) newRpc() error {
 			Window:       cc.valInfo.Window,
 			Nodes:        len(cc.Nodes),
 			HealthyNodes: 0,
-			ActiveAlerts: 1,
+			ActiveAlerts: cc.activeAlerts,
 			Height:       0,
 			LastError:    cc.lastError,
-			Blocks:       cc.blocksResults,
+			Blocks:       cc.blockResultsSnapshot(),
 		}
 	}
 	return errors.New("no usable endpoints available for " + cc.ChainId)
@@ -120,74 +123,81 @@ func (cc *ChainConfig) newRpc() error {
 func (cc *ChainConfig) monitorHealth(ctx context.Context, chainName string) {
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
-	if cc.client == nil {
-		_ = cc.newRpc()
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-
 		case <-tick.C:
-			var err error
+			var probes sync.WaitGroup
 			for _, node := range cc.Nodes {
-				go func(node *NodeConfig) {
-					alert := func(msg string) {
-						node.lastMsg = fmt.Sprintf("%-12s node %s is %s", chainName, node.Url, msg)
-						if !node.AlertIfDown {
-							// even if we aren't alerting, we want to display the status in the dashboard.
-							node.down = true
-							return
+				node := node
+				probes.Add(1)
+				go func() {
+					defer probes.Done()
+					markUnhealthy := func(message string) {
+						state := cc.updateNodeState(node, func(state *nodeRuntimeState) {
+							state.lastMsg = fmt.Sprintf("%-12s node %s is %s", chainName, node.Url, message)
+							if !state.down {
+								state.down = true
+								if node.AlertIfDown {
+									state.downSince = time.Now()
+								}
+							}
+						})
+						if td.Prom && node.AlertIfDown {
+							td.emitStat(ctx, cc.mkUpdate(metricNodeDownSeconds, time.Since(state.downSince).Seconds(), node.Url))
 						}
-						if !node.down {
-							node.down = true
-							node.downSince = time.Now()
-						}
-						if td.Prom {
-							td.statsChan <- cc.mkUpdate(metricNodeDownSeconds, time.Since(node.downSince).Seconds(), node.Url)
-						}
-						l("⚠️ " + node.lastMsg)
+						l("⚠️ " + state.lastMsg)
 					}
-					c, e := rpchttp.New(node.Url, "/websocket")
-					if e != nil {
-						alert(e.Error())
+					client, err := rpchttp.New(node.Url, "/websocket")
+					if err != nil {
+						markUnhealthy(err.Error())
+						return
 					}
-					cwt, cancel := context.WithTimeout(ctx, 10*time.Second)
-					status, e := c.Status(cwt)
+					requestContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+					status, err := client.Status(requestContext)
 					cancel()
-					if e != nil {
-						alert("down")
+					if err != nil {
+						markUnhealthy("down")
 						return
 					}
 					if status.NodeInfo.Network != cc.ChainId {
-						alert("on the wrong network")
+						markUnhealthy("on the wrong network")
 						return
 					}
 					if status.SyncInfo.CatchingUp {
-						alert("not synced")
-						node.syncing = true
+						markUnhealthy("not synced")
+						cc.updateNodeState(node, func(state *nodeRuntimeState) { state.syncing = true })
 						return
 					}
 
-					// node's OK, clear the note
-					if node.down {
-						node.lastMsg = ""
-						node.wasDown = true
+					wasDown := false
+					cc.updateNodeState(node, func(state *nodeRuntimeState) {
+						wasDown = state.down
+						if state.down {
+							state.lastMsg = ""
+							state.wasDown = true
+						}
+						state.down = false
+						state.syncing = false
+						state.downSince = time.Unix(0, 0)
+					})
+					cc.setNoNodes(false)
+					if td.Prom {
+						td.emitStat(ctx, cc.mkUpdate(metricNodeDownSeconds, 0, node.Url))
 					}
-					td.statsChan <- cc.mkUpdate(metricNodeDownSeconds, 0, node.Url)
-					node.down = false
-					node.syncing = false
-					node.downSince = time.Unix(0, 0)
-					cc.noNodes = false
-					l(fmt.Sprintf("🟢 %-12s node %s is healthy", chainName, node.Url))
-				}(node)
+					if wasDown {
+						l(fmt.Sprintf("🟢 %-12s node %s is healthy", chainName, node.Url))
+					}
+				}()
 			}
-
+			probes.Wait()
+			if ctx.Err() != nil {
+				return
+			}
 			if cc.client == nil {
-				e := cc.newRpc()
-				if e != nil {
-					l("💥", cc.ChainId, e)
+				if err := cc.newRpc(ctx); err != nil {
+					l("💥", cc.ChainId, err)
 				}
 			}
 			if cc.valInfo != nil {
@@ -202,63 +212,66 @@ func (cc *ChainConfig) monitorHealth(ctx context.Context, chainName string) {
 					Valcons:    cc.valInfo.Valcons,
 				}
 			}
-			err = cc.GetValInfo(false)
-			if err != nil {
+			if err := cc.GetValInfo(ctx, false); err != nil {
 				l("❓ refreshing signing info for", cc.ValAddress, err)
 			}
 		}
 	}
 }
 
-func (c *Config) pingHealthcheck() {
+func (c *Config) pingHealthcheck(ctx context.Context) {
 	if !c.Healthcheck.Enabled {
 		return
 	}
-
 	ticker := time.NewTicker(c.Healthcheck.PingRate * time.Second)
-
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-c.ctx.Done():
-				return
-			case <-ticker.C:
-				_, err := http.Get(c.Healthcheck.PingURL)
-				if err != nil {
-					l(fmt.Sprintf("❌ Failed to ping healthcheck URL: %s", err.Error()))
-				} else {
-					l(fmt.Sprintf("🏓 Successfully pinged healthcheck URL: %s", c.Healthcheck.PingURL))
-				}
+	defer ticker.Stop()
+	client := &http.Client{Timeout: 10 * time.Second}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Healthcheck.PingURL, nil)
+			var response *http.Response
+			if err == nil {
+				response, err = client.Do(request)
+			}
+			if err != nil {
+				l(fmt.Sprintf("❌ Failed to ping healthcheck URL: %s", err.Error()))
+			} else {
+				_ = response.Body.Close()
+				l(fmt.Sprintf("🏓 Successfully pinged healthcheck URL: %s", c.Healthcheck.PingURL))
 			}
 		}
-	}()
+	}
 }
 
 // endpointRex matches the first a tag's hostname and port if present.
 var endpointRex = regexp.MustCompile(`//([^/:]+)(:\d+)?`)
 
-// guessPublicEndpoint attempts to deal with a shortcoming in the tendermint RPC client that doesn't allow path prefixes.
-// The cosmos.directory requires them. This is a workaround to get the actual URL for the server behind their proxy.
-// The RPC base URL will return links endpoints, and we can parse this to guess the original URL.
-func guessPublicEndpoint(u string) string {
-	resp, err := http.Get(u + "/")
+// guessPublicEndpointContext attempts to deal with a shortcoming in the Tendermint RPC client that does not allow path prefixes.
+func guessPublicEndpointContext(parent context.Context, u string) string {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"/", nil)
 	if err != nil {
 		return u
 	}
-	b, err := io.ReadAll(resp.Body)
+	resp, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return u
 	}
-	_ = resp.Body.Close()
-	matches := endpointRex.FindStringSubmatch(string(b))
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return u
+	}
+	matches := endpointRex.FindStringSubmatch(string(body))
 	if len(matches) < 2 {
-		// didn't work
 		return u
 	}
 	proto := "https://"
 	port := ":443"
-	// will be 3 elements if there is a port no port means listening on https
 	if len(matches) == 3 && matches[2] != "" && matches[2] != ":443" {
 		proto = "http://"
 		port = matches[2]

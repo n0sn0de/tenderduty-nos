@@ -15,7 +15,7 @@ concurrency:
 jobs:
   smoke:
     name: Build and non-network smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -32,5 +32,8 @@ jobs:
         run: |
           docker run --rm --network none --read-only --cap-drop all \
             --security-opt no-new-privileges nosnode-seer:ci -version
-          test "$(docker image inspect nosnode-seer:ci --format '{{.Config.User}}')" = "65532:65532"
+          test "$(docker image inspect nosnode-seer:ci --format '{{.Config.User}}')" = "26657:26657"
           test "$(docker image inspect nosnode-seer:ci --format '{{json .Config.Entrypoint}}')" = '["/usr/local/bin/nosnode-seer"]'
+
+      - name: Verify durable state and migration contracts offline
+        run: CONTAINER_RUNTIME=docker bash scripts/container-state-smoke.sh nosnode-seer:ci
