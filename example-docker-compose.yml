@@ -1,34 +1,45 @@
-services:
-  nosnode-seer:
-    build:
-      context: .
-      args:
-        VERSION: local
-        COMMIT: local
-        BUILD_DATE: reproducible-local
-    image: nosnode-seer:local
-    container_name: nosnode-seer
-    restart: unless-stopped
-    read_only: true
-    user: "65532:65532"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    ports:
-      - "127.0.0.1:8888:8888"
-      - "127.0.0.1:28686:28686"
-    volumes:
-      - ./config.yml:/etc/nosnode-seer/config.yml:ro
-      - ./chains.d:/etc/nosnode-seer/chains.d:ro
-      - seer-state:/var/lib/nosnode-seer
-    command:
-      - -f
-      - /etc/nosnode-seer/config.yml
-      - -cc
-      - /etc/nosnode-seer/chains.d
-      - -state
-      - /var/lib/nosnode-seer/state.json
+# docker-compose example for tenderduty, copy this file to docker-compose.yml and edit to suit.
+version: '3.2'
+
+networks:
+  monitor-net:
+    driver: bridge
 
 volumes:
-  seer-state:
+  home:
+  caddy_data: {}
+
+services:
+  tenderduty:
+    build: .
+    command: ""
+    expose:
+      - 8888   # Dashboard
+      - 28686  # Prometheus exporter
+    volumes:
+      - home:/var/lib/tenderduty
+      - ./config.yml:/var/lib/tenderduty/config.yml
+      - ./chains.d:/var/lib/tenderduty/chains.d/
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "10"
+    restart: unless-stopped
+    networks:
+      - monitor-net
+
+  caddy:
+    image: caddy:2.3.0
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "8888:8888"
+      - "28686:28686"
+    volumes:
+      - ./caddy:/etc/caddy
+      - caddy_data:/data
+    restart: unless-stopped
+    networks:
+      - monitor-net

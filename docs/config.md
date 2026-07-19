@@ -1,69 +1,128 @@
-# Configuration reference
+# Settings for config.yml
 
-NosNode Seer reads a primary YAML file (`config.yml` by default) and then every `*.yml` file in `chains.d`. A chain file is decoded as one chain object; its filename without `.yml` becomes the chain display name and overrides a same-name entry from the primary file.
+Almost everything in tenderduty is controlled via the `config.yml` file. There are many options, and this attempts to explain them. 
 
-Print the embedded example without monitoring:
+**ProTip:** If you only have a binary, or are using the docker image the `-example-config` flag will have tenderduty dump the [example-config.yml](../example-config.yml) file to STDOUT and exit. This can be used to get started without needing to download from Github. Example:
 
-```sh
-nosnode-seer -example-config
+```
+$ tenderduty -example-config > config.yml
 ```
 
-## Global keys
+Or if using the docker image:
 
-| Key | Type | Meaning |
-|---|---|---|
-| `enable_dashboard` | bool | Open the dashboard/WebSocket listener. |
-| `listen_port` | integer/string | Dashboard port; default example `8888`. |
-| `hide_logs` | bool | Hide dashboard logs and some node detail. This is not authentication. |
-| `node_down_alert_minutes` | integer | Delay before node-down alerting. |
-| `node_down_alert_severity` | string | PagerDuty severity for node-down alerts. |
-| `prometheus_enabled` | bool | Open the Prometheus listener. |
-| `prometheus_listen_port` | integer | Prometheus port; default example `28686`. |
-| `pagerduty`, `discord`, `telegram`, `slack` | object | Global integration gates/default credentials. |
-| `healthcheck` | object | Optional dead-man's-switch ping. |
-| `chains` | map | Display name to chain configuration. |
+```
+$ docker run --rm ghcr.io/blockpane/tenderduty:latest -example-config >config.yml
+```
 
-A notification must be enabled globally **and** inside the chain's `alerts` object. Blank chain-specific credentials inherit global values.
+* [General Settings](#general-settings)
+* [Pagerduty Settins](#pagerduty-settings)
+* [Discord Settings](#discord-settings)
+* [Telegram Settings](#telegram-settings)
+* [Chain Specific Settings](#chain-specific-settings)
+* [Chain Alerting Settings](#chain-alerting-settings)
+* [Node Settings](#node-settings)
 
-### Notification objects
+A few notes on how Go handles YAML:
 
-- `pagerduty`: `enabled`, `api_key`, `default_severity`
-- `discord`: `enabled`, `webhook`, `mentions`
-- `telegram`: `enabled`, `api_key`, `channel`, `mentions`
-- `slack`: `enabled`, `webhook`, `mentions`
-- `healthcheck`: `enabled`, `ping_url`, `ping_rate` (seconds)
+* Booleans can be specified with either true/false or yes/no
+* If a setting is omitted it will default to an empty string for strings, zero for numbers, false for booleans, and nil for arrays and structures.
+* This can be useful for building a more compact config file. 
 
-## Chain keys
+For example if not using telegram and discord, and only alerting on consecutive missed blocks the config for a chain could be condensed to:
 
-| Key | Type | Meaning |
-|---|---|---|
-| `chain_id` | string | Expected network ID; endpoints on another network are rejected. |
-| `valoper_address` | string | Validator operator address used to discover consensus identity. |
-| `valcons_override` | string | Optional consensus address override. |
-| `public_fallback` | bool | Permit public endpoint discovery when configured nodes fail. |
-| `alerts` | object | Alert thresholds and per-chain integration gates. |
-| `nodes` | list | RPC URL plus `alert_if_down`. |
+```yaml
+chains:
 
-RPC URLs must include a scheme. Tendermint TCP URLs and HTTP(S) URLs are accepted by the existing client behavior. Prefer authenticated/private or verified TLS endpoints.
+  "Osmosis":
+    chain_id: osmosis-1
+    valoper_address: osmovaloper1xxxxxxx...
+    alerts:
+      consecutive_enabled: yes
+      consecutive_missed: 5
+      pagerduty:
+        enabled: yes
+    nodes:
+      - url: tcp://localhost:26657
+```
 
-## Alert keys
+## General Settings
 
-| Key | Meaning |
-|---|---|
-| `stalled_enabled`, `stalled_minutes` | Alert after no new block for the configured duration. |
-| `consecutive_enabled`, `consecutive_missed`, `consecutive_priority` | Consecutive miss alert and severity. |
-| `percentage_enabled`, `percentage_missed`, `percentage_priority` | Sliding-window missed percentage alert and severity. |
-| `alert_if_inactive` | Alert when validator leaves the active set, is jailed, or tombstoned. |
-| `alert_if_no_servers` | Alert when no RPC endpoint is usable. |
-| `pagerduty`, `discord`, `telegram`, `slack` | Per-chain enablement and optional overrides. |
+| Config Setting               | Description                                                                                                                                                                                                       |
+|------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `enable_dashboard`           | controls whether the dashboard is enabled                                                                                                                                                                         |
+| `listen_port`                | What TCP port the dashboard will listen on. Only the port is controllable for now.                                                                                                                                |
+| `hide_logs`                  | hide_logs is useful if the dashboard will be posted publicly. It disables the log feed, and obscures most node-related details. Be aware this isn't fully vetted for preventing info leaks about node names, etc. |
+| `node_down_alert_minutes`    | How long to wait before alerting that a node is down.                                                                                                                                                             |
+| `prometheus_enabled`         | Should the prometheus exporter be enabled? See the [prometheus doc](prometheus.md) for information about what endpoints are available.                                                                            |
+| `prometheus_listen_port`     | What port should it listen on? For now only port is configurable                                                                                                                                                  |
 
-Legacy booleans `discord_alerts`, `telegram_alerts`, and `pagerduty_alerts` remain decoded where present because their struct tags are retained. New configurations should use the nested objects in `example-config.yml`.
+## PagerDuty Settings
 
-## Config precedence
+| Config Setting               | Description                                                                                                                                                                                                       |
+|------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `pagerduty.enabled`          | Should we use PD? Be aware that if this is set to no it overrides individual chain alerting settings.                                                                                                             |
+| `pagerduty.api_key`          | This is an API key, not oauth token, [see the pagerduty doc](pagerduty.md) for specific setup details.                                                                                                            |
+| `pagerduty.default_severity` | Not currently used, but will be soon. This allows setting escalation priorities etc.                                                                                                                              |
 
-1. `-f PATH` selects the primary file.
-2. If `-f` is not changed and `CONFIG` is set, `CONFIG` selects it.
-3. `-cc DIR` selects the chain directory.
-4. Chain files override same-name primary `chains` entries.
+## Discord Settings
 
-Unknown YAML fields are currently tolerated for legacy compatibility. Review spelling carefully; strict decoding is a later migration phase.
+| Config Setting               | Description                                                                                                                                                                                                       |
+|------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `discord.enabled`            | Alert to discord? Also overrides chain-specific alerts if "no".                                                                                                                                                   |
+| `discord.webhook`            | See the [discord setup document](discord.md) for how to get this information.                                                                                                                                     |
+
+## Telegram Settings
+
+| Config Setting     | Description                                                                         |
+|--------------------|-------------------------------------------------------------------------------------|
+| `telegram.enabled` | Alert via telegram? Note: also supersedes chain-specific settings.                  |
+| `telegram.api_key` | API key ... talk to @BotFather. More setup info in the [telegram doc](telegram.md). |
+| `telegram.channel` | See the [telegram doc](telegram.md) for how to get this value.                      |
+
+## Health Check Settings
+
+| Config Setting          | Description                                                                         |
+|-------------------------|-------------------------------------------------------------------------------------|
+| `healthcheck.enabled`   | Send pings to determine if the monitor is running?                                  |
+| `healthcheck.ping_url`  | URL to send pings to.                                                               |
+| `healthcheck.ping_rate` | Rate in which pings are sent in seconds.                                            |
+
+## Chain Specific Settings
+
+*This section can be repeated for monitoring multiple chains.*
+
+| Config Setting                 | Description                                                                                                                                                                                                                                                    |
+|--------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `chain."name"`                 | The user-friendly name that will be used for labels. Highly suggest wrapping in quotes to prevent YAML parsing issues if there is a space or special characters.                                                                                               |
+| `chain."name".chain_id`        | The chain-id for the chain, this is verified to match when connecting to an RPC server                                                                                                                                                                         |
+| `chain."name".valoper_address` | Hooray, in v2 we derive the valcons from abci queries so you don't have to jump through hoops to figure out how to convert ed25519 keys to the appropriate bech32 address                                                                                      |
+| `chain."name".public_fallback` | Should the monitor revert to using public API endpoints if all supplied RCP nodes fail? This isn't always reliable, not all public nodes have websocket proxying setup correctly. Endpoints are sourced from the [cosmos directory](https://cosmos.directory). |
+
+## Chain Alerting Settings
+
+| Config Setting                             | Description                                                                                                                                                                                                                                                                                                                                                                        |
+|--------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `chain."name".alerts.stalled_enabled`      | If the chain stops seeing new blocks, should an alert be sent?                                                                                                                                                                                                                                                                                                                     |
+| `chain."name".alerts.stalled_minutes`      | How long a halted chain takes in minutes to generate an alarm.                                                                                                                                                                                                                                                                                                                     |
+| `chain."name".alerts.consecutive_enabled`  | Most basic alarm, you just missed x blocks ... would you like to know?                                                                                                                                                                                                                                                                                                             |
+| `chain."name".alerts.consecutive_missed`   | How many missed blocks should trigger a notification?                                                                                                                                                                                                                                                                                                                              |
+| `chain."name".alerts.consecutive_priority` | NOT USED: future hint for pagerduty's routing.                                                                                                                                                                                                                                                                                                                                     |
+| `chain."name".alerts.percentage_enabled`   | For each chain there is a specific window of blocks and a percentage of missed blocks that will result in a downtime jail infraction. Should an alert be sent if a certain percentage of this window is exceeded?                                                                                                                                                                  |
+| `chain."name".alerts.percentage_missed`    | What percentage should trigger the alert?                                                                                                                                                                                                                                                                                                                                          |
+| `chain."name".alerts.percentage_priority`  | NOT USED: future hint for pagerduty's routing.                                                                                                                                                                                                                                                                                                                                     |
+| `chain."name".alerts.alert_if_inactive`    | Should an alert be sent if the validator is not in the active set: jailed, tombstoned, or unbonding?                                                                                                                                                                                                                                                                               |
+| `chain."name".alerts.alert_if_no_servers`  | Should an alert be sent if no RPC servers are responding? (Note this alarm uses the node_down_alert_minutes setting)                                                                                                                                                                                                                                                               |
+| `chain."name".alerts.pagerduty.*`          | This section is the same as the pagerduty structure above. It allows disabling or enabling specific settings on a per-chain basis. Including routing to a different destination. If the api_key is blank it will use the settings defined in `pagerduty.*` <br />*Note both `pagerduty.enabled` and `chain."name".alerts.pagerduty.enabled` must be 'yes' to get alerts.*          |
+| `chain."name".alerts.discord.*`            | This section is the same as the discord structure above. It allows disabling or enabling specific settings on a per-chain basis. Including routing to a different destination. If the webhook is blank it will use the settings defined in `discord.*` <br />*Note both `discord.enabled` and `chain."name".alerts.discord.enabled` must be 'yes' to get alerts.*                  |
+| `chain."name".alerts.telegram.*`           | This section is the same as the telegram structure above. It allows disabling or enabling specific settings on a per-chain basis. Including routing to a different destination. If the api_key and channel are blank it will use the settings defined in `telegram.*` <br />*Note both `telegram.enabled` and `chain."name".alerts.telegram.enabled` must be 'yes' to get alerts.* |
+
+## Node Settings: 
+
+*Note: if this section is omitted and public fallbacks are enabled, tenderduty will only use public endpoints. This is not encouraged for a few reasons: public nodes can be unreliable, some proxy servers do not support websockets (which td relies on for watching blocks,) and it consumes resources from other validators.*
+
+| Config Setting                       | Description                                                                                                                                                                 |
+|--------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `chain."name".nodes[]`               | This is an array of nodes to use as RPC servers.                                                                                                                            |
+| `chain."name".nodes[].url`           | Should include the protocol://hostname:port For now only http (tcp is an alias) and https (with a valid certificate) are supported. UDS and insecure TLS support is planned |
+| `chain."name".nodes[].alert_if_down` | Should an alert be sent if this host isn't responding? Uses the `node_down_alert_minutes` setting to determine threshold.                                                   |
+
