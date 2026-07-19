@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify NosNode Seer asset dimensions, transparency, size budgets, and hashes."""
+"""Verify NosNode Seer crystal-ball assets, budgets, silhouette, and hashes."""
 
 from __future__ import annotations
 
@@ -13,17 +13,26 @@ from PIL import Image
 
 EXPECTED = {
     "nosnode-seer-mark-1024.png": ((1024, 1024), "PNG", True, 1_200_000),
-    "nosnode-seer-mark-512.webp": ((512, 512), "WEBP", True, 450_000),
-    "nosnode-seer-favicon-256.png": ((256, 256), "PNG", True, 220_000),
-    "nosnode-seer-favicon-64.png": ((64, 64), "PNG", True, 45_000),
+    "nosnode-seer-mark-512.webp": ((512, 512), "WEBP", True, 500_000),
+    "nosnode-seer-favicon-256.png": ((256, 256), "PNG", True, 240_000),
+    "nosnode-seer-favicon-64.png": ((64, 64), "PNG", True, 50_000),
     "nosnode-seer-favicon-32.png": ((32, 32), "PNG", True, 18_000),
     "nosnode-seer-favicon-16.png": ((16, 16), "PNG", True, 8_000),
-    "nosnode-seer-hero-1920x720.webp": ((1920, 720), "WEBP", False, 700_000),
-    "nosnode-seer-hero-1280x480.png": ((1280, 480), "PNG", False, 1_250_000),
+    "nosnode-seer-hero-1920x720.webp": ((1920, 720), "WEBP", False, 160_000),
+    "nosnode-seer-hero-1280x480.png": ((1280, 480), "PNG", False, 1_500_000),
+    "nosnode-seer-space-1920x1080.webp": ((1920, 1080), "WEBP", False, 120_000),
+    "nosnode-seer-space-1280x720.webp": ((1280, 720), "WEBP", False, 80_000),
 }
 SVG_NAME = "nosnode-seer-mark.svg"
 SVG_MAX_BYTES = 12_000
-TOTAL_ASSET_BUDGET = 3_500_000
+TOTAL_ASSET_BUDGET = 4_500_000
+INTEGRATION_SUBSET = (
+    SVG_NAME,
+    "nosnode-seer-favicon-32.png",
+    "nosnode-seer-hero-1920x720.webp",
+    "nosnode-seer-space-1920x1080.webp",
+)
+INTEGRATION_BUDGET = 150_000
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,11 +70,65 @@ def edge_alpha_is_clear(image: Image.Image) -> bool:
     return max(edge_values, default=0) == 0
 
 
+def transparent_rgb_is_neutral(image: Image.Image) -> bool:
+    return all(
+        alpha != 0 or (red, green, blue) == (0, 0, 0)
+        for red, green, blue, alpha in image.convert("RGBA").get_flattened_data()
+    )
+
+
+def region_alpha_coverage(
+    image: Image.Image,
+    box: tuple[float, float, float, float],
+    *,
+    threshold: int = 32,
+) -> float:
+    """Return visible-alpha coverage inside a normalized x/y box."""
+    alpha = image.convert("RGBA").getchannel("A")
+    x0, y0, x1, y1 = box
+    crop = alpha.crop(
+        (
+            round(x0 * image.width),
+            round(y0 * image.height),
+            round(x1 * image.width),
+            round(y1 * image.height),
+        )
+    )
+    pixels = list(crop.get_flattened_data())
+    return sum(value > threshold for value in pixels) / len(pixels)
+
+
+def verify_crystal_ball_silhouette(name: str, image: Image.Image, errors: list[str]) -> None:
+    """Reject the old sparse diamond/watchtower silhouette.
+
+    The replacement must have a substantially filled circular orb across the upper
+    centre and a separate, sturdy base below it. These broad occupancy checks are
+    intentionally tolerant of glass highlights and internal negative space.
+    """
+    orb_coverage = region_alpha_coverage(image, (0.25, 0.17, 0.75, 0.66))
+    base_coverage = region_alpha_coverage(image, (0.34, 0.68, 0.66, 0.86))
+    shoulder_coverage = (
+        region_alpha_coverage(image, (0.16, 0.31, 0.25, 0.54))
+        + region_alpha_coverage(image, (0.75, 0.31, 0.84, 0.54))
+    ) / 2.0
+    if orb_coverage < 0.68:
+        errors.append(f"{name}: orb-region alpha coverage {orb_coverage:.3f} is too sparse for a literal crystal ball")
+    if base_coverage < 0.38:
+        errors.append(f"{name}: pedestal-region alpha coverage {base_coverage:.3f} is too sparse")
+    if shoulder_coverage < 0.22:
+        errors.append(f"{name}: round orb shoulders are not visibly established ({shoulder_coverage:.3f})")
+
+
 def main() -> None:
     args = parse_args()
     asset_dir = args.asset_dir.resolve()
     errors: list[str] = []
     inventory: list[dict[str, object]] = []
+
+    expected_names = set(EXPECTED) | {SVG_NAME}
+    actual_names = {path.name for path in asset_dir.iterdir() if path.is_file()} if asset_dir.is_dir() else set()
+    for name in sorted(actual_names - expected_names):
+        errors.append(f"unexpected obsolete asset: {name}")
 
     for name, (expected_size, expected_format, transparent, max_bytes) in EXPECTED.items():
         path = asset_dir / name
@@ -99,8 +162,12 @@ def main() -> None:
                 record["coverage"] = round(coverage, 5)
                 if not edge_alpha_is_clear(image):
                     errors.append(f"{name}: visible alpha touches image edge")
-                if name.startswith("nosnode-seer-favicon-") and image.width <= 32 and not 0.22 <= coverage <= 0.72:
-                    errors.append(f"{name}: favicon visible coverage {coverage:.3f} is outside 0.22–0.72")
+                if not transparent_rgb_is_neutral(image):
+                    errors.append(f"{name}: fully transparent pixels must have RGB (0,0,0)")
+                if name == "nosnode-seer-mark-1024.png" or name.startswith("nosnode-seer-favicon-"):
+                    verify_crystal_ball_silhouette(name, image, errors)
+                if name.startswith("nosnode-seer-favicon-") and image.width <= 32 and not 0.30 <= coverage <= 0.76:
+                    errors.append(f"{name}: favicon visible coverage {coverage:.3f} is outside 0.30–0.76")
             inventory.append(record)
 
     svg = asset_dir / SVG_NAME
@@ -112,6 +179,8 @@ def main() -> None:
             errors.append(f"{SVG_NAME}: missing expected 512 viewBox")
         if any(term in svg_text.lower() for term in ("<image", "font-family", "data:")):
             errors.append(f"{SVG_NAME}: fallback must not embed images, data URIs, or fonts")
+        if "crystal ball" not in svg_text.lower() or "pedestal" not in svg_text.lower():
+            errors.append(f"{SVG_NAME}: accessible description must identify a crystal ball and pedestal")
         if svg.stat().st_size > SVG_MAX_BYTES:
             errors.append(f"{SVG_NAME}: exceeds {SVG_MAX_BYTES} bytes")
         inventory.append(
@@ -130,10 +199,20 @@ def main() -> None:
     if total_bytes > TOTAL_ASSET_BUDGET:
         errors.append(f"asset total {total_bytes} bytes exceeds {TOTAL_ASSET_BUDGET}")
 
+    by_name = {Path(str(record["path"])).name: record for record in inventory}
+    integration_bytes = sum(int(by_name[name]["bytes"]) for name in INTEGRATION_SUBSET if name in by_name)
+    if any(name not in by_name for name in INTEGRATION_SUBSET):
+        errors.append("integration subset is incomplete")
+    elif integration_bytes >= INTEGRATION_BUDGET:
+        errors.append(f"integration subset {integration_bytes} bytes must remain under {INTEGRATION_BUDGET}")
+
     payload = {
         "asset_dir": str(asset_dir),
         "asset_total_bytes": total_bytes,
         "asset_budget_bytes": TOTAL_ASSET_BUDGET,
+        "integration_subset": [f"branding/assets/{name}" for name in INTEGRATION_SUBSET],
+        "integration_subset_bytes": integration_bytes,
+        "integration_budget_bytes": INTEGRATION_BUDGET,
         "assets": sorted(inventory, key=lambda item: str(item["path"])),
         "errors": errors,
         "ok": not errors,
@@ -147,6 +226,7 @@ def main() -> None:
                 f"{record['format']} {record['bytes']} {record['sha256']}"
             )
         print(f"TOTAL {total_bytes}/{TOTAL_ASSET_BUDGET} bytes")
+        print(f"INTEGRATION {integration_bytes}/{INTEGRATION_BUDGET} bytes")
         print("VERIFY OK" if not errors else "VERIFY FAILED")
         for error in errors:
             print(f"ERROR {error}")
