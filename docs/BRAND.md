@@ -1,84 +1,108 @@
 # NosNode Seer brand system
 
-**Status:** original draft identity candidate for **NosNode Seer**
+**Working name:** **NosNode Seer — Cosmos validator monitoring & alerts**
 
-**Operator brand:** **NosNode🔮**
+**Status:** revised draft identity candidate; literal crystal-ball direction
+
+**Operator brand in text:** **NosNode🔮**
 
 **Source baseline:** `fb37574b352883fe69eb194338e4cfbaf6d13aa9`
 
-This package is deliberately separate from the running dashboard. It adds no UI
-wiring and changes no runtime HTML, CSS, JavaScript, Go, workflow, container, or
-configuration file.
+This package is deliberately separate from the running dashboard. It changes only
+`branding/**` and this document; it adds no runtime, README, workflow, container,
+configuration, HTML, CSS, JavaScript, or Go integration.
 
 ## Concept
 
-The mark is a sovereign validator core inside a crystal watchtower aperture:
+The primary mark is an original crystal ball built from generated Blender geometry:
 
-- the faceted orb is the protected validator;
-- the vertical aperture is the seer/monitoring lens;
-- the four heavy crystal rails form both an eye-shaped shield and a watchtower;
-- the north beacon signals continuous observation;
-- the hero extends the core into six abstract multi-node constellations, suggesting
-  many monitored chains without reproducing any chain logo.
+- a nearly circular glass sphere dominates the silhouette;
+- a broad cradle, neck, and foot form a clear pedestal below it;
+- a three-arm natural spiral galaxy, violet/magenta/cyan nebula strands, cool and
+  warm stars, and a warm galactic core are visible inside the sphere;
+- a thin abstract orbit and seven-node constellation suggest many monitored Cosmos
+  chains without reproducing the Cosmos Hub atom mark or any chain logo;
+- a cyan refractive rim and restrained reflected crescents communicate glass without
+  relying on bloom, a copied emoji path, or an opaque purple blob.
 
-The result is meant to feel like a midnight observatory, not a generic neon coin.
-The palette is narrow, bloom is disabled, the geometry is readable before its
-surface detail, and there is no animation.
+The wide hero places a denser crystal ball at left within an authored procedural
+nebula and sparse star/constellation field. Its right half remains intentionally dark
+and quiet for external HTML or README title copy; no text is baked into the render.
+Two standalone 16:9 space-background derivatives contain no central mark and retain
+quiet overlay areas for documentation and empty states.
+
+The former diamond shield, watchtower rails, eye aperture, beacon/finial, and related
+hero renders have been replaced under the active filenames. Git history is the only
+archive of that rejected direction.
 
 ## Asset choice
 
 | Need | Preferred file | Notes |
 |---|---|---|
-| Master transparent mark | `branding/assets/nosnode-seer-mark-1024.png` | RGBA; documentation, large UI, compositing |
+| Detailed transparent mark | `branding/assets/nosnode-seer-mark-1024.png` | RGBA review/master derivative; full cosmos |
 | Lightweight transparent mark | `branding/assets/nosnode-seer-mark-512.webp` | Lossless WebP with alpha |
-| Browser/app icon | `branding/assets/nosnode-seer-favicon-32.png` | Primary favicon source |
-| Small browser fallback | `branding/assets/nosnode-seer-favicon-16.png` | Smallest tested raster; do not reduce further |
-| High-density icon | `branding/assets/nosnode-seer-favicon-64.png` or `-256.png` | UI launcher and high-DPI contexts |
-| Wide hero | `branding/assets/nosnode-seer-hero-1920x720.webp` | Preferred web/README banner |
+| Browser/app icon | `branding/assets/nosnode-seer-favicon-32.png` | Dedicated simplified Blender composition |
+| Small browser fallback | `branding/assets/nosnode-seer-favicon-16.png` | Absolute floor; separate orb and base survive |
+| High-density icon | `branding/assets/nosnode-seer-favicon-64.png` or `-256.png` | Uses the same simplified source composition |
+| Wide hero | `branding/assets/nosnode-seer-hero-1920x720.webp` | Preferred 8:3 web/README banner |
 | PNG hero fallback | `branding/assets/nosnode-seer-hero-1280x480.png` | Lossless documentation fallback |
-| Vector fallback | `branding/assets/nosnode-seer-mark.svg` | Flat front projection of the same diamond/orb/aperture geometry |
-| Editable source | `branding/nosnode-seer.blend` | Generated, named collections/materials/cameras |
+| Standalone space background | `branding/assets/nosnode-seer-space-1920x1080.webp` | Preferred 16:9 docs/empty-state field; no logo |
+| Smaller space background | `branding/assets/nosnode-seer-space-1280x720.webp` | Aggressively optimized 16:9 derivative |
+| Vector fallback | `branding/assets/nosnode-seer-mark.svg` | Flat projection of the orb, spiral, rim, stars, and pedestal |
+| Editable source | `branding/nosnode-seer.blend` | Five named collections, four cameras, generated materials/geometry |
 
-The SVG is intentionally simple. It is generated by the Blender build script from
-the front-projection dimensions of the same shield rails, orb, aperture, sill, and
-beacon. It embeds no font, image, data URI, or third-party path.
+The SVG is generated by the Blender build script from the same numeric orb/base
+proportions and palette. It embeds no image, data URI, font, copied glyph, or
+third-party path.
+
+## Recommended integration subset
+
+The exact recommended first integration subset is:
+
+| File | Bytes |
+|---|---:|
+| `branding/assets/nosnode-seer-mark.svg` | 1,718 |
+| `branding/assets/nosnode-seer-favicon-32.png` | 2,089 |
+| `branding/assets/nosnode-seer-hero-1920x720.webp` | 31,376 |
+| `branding/assets/nosnode-seer-space-1920x1080.webp` | 16,702 |
+| **Total** | **51,885** |
+
+This total is verifier-enforced and remains below the strict 150,000-byte compressed
+integration budget. The larger PNGs, high-density favicons, lossless WebP mark, and
+`.blend` are review/source material rather than the recommended embedded subset.
 
 ## Palette
 
-Hex values are sRGB interface tokens. The Blender generator converts them to
-scene-linear values before shading.
+Hex values are sRGB interface tokens. The generator converts them to scene-linear
+values before assigning shaders and lights.
 
 | Token | Hex | Intended role | Contrast on Void |
 |---|---:|---|---:|
-| Void | `#030512` | Primary observatory background | — |
-| Midnight | `#091129` | Structural rails, dark silhouette | — |
-| Deep Violet | `#302064` | Facet depth; never body text | — |
-| Violet | `#795CFF` | Controlled active accent | 4.63:1 |
-| Soft Violet | `#B7A7FF` | Secondary signal/highlight | 9.65:1 |
-| Cyan | `#58D5E8` | Monitoring aperture and active scan | 11.70:1 |
-| Starlight | `#F1F4FF` | Primary text/highest signal | 18.49:1 |
-| Slate | `#68718F` | Decorative constellation paths | 4.20:1 |
+| Void | `#02030B` | Deep-space field | — |
+| Midnight | `#070B1F` | Orb depth and pedestal | 1.06:1 |
+| Indigo | `#121338` | Secondary depth | 1.15:1 |
+| Deep Violet | `#291550` | Pedestal/nebula depth | 1.29:1 |
+| Violet | `#7657E8` | Galaxy arm accent | 4.21:1 |
+| Magenta | `#CE4FAE` | Nebula accent | 5.25:1 |
+| Cyan | `#57D6E8` | Glass rim/refraction | 11.94:1 |
+| Starlight | `#EEF4FF` | Cool stars and primary light text | 18.64:1 |
+| Warm | `#FFD39A` | Restrained galactic core/starlight | 14.74:1 |
+| Slate | `#566382` | Decorative orbit/constellation lines | 3.43:1 |
 
 Accessibility rules:
 
 - Use Starlight or Cyan for normal text on Void.
-- Violet technically clears WCAG AA for normal text on Void at 4.63:1, but keep it
-  to large labels or nonessential accents so small antialiased text has margin.
-- Slate does **not** clear 4.5:1 for normal text. Use it only for separators,
-  diagrams, muted non-text decoration, or large text that independently clears the
-  applicable requirement.
-- On light surfaces, Midnight contrasts 17.02:1 with Starlight, 10.77:1 with Cyan,
-  and 8.88:1 with Soft Violet.
-- Do not replace the dashboard's semantic success, warning, missed-block, or error
-  colors with brand accents. Brand color and operational status are separate
-  information systems.
-
-Ratios above use the WCAG relative-luminance formula on token values, not sampled
-shaded pixels.
+- Magenta clears WCAG AA for normal text on Void; Violet does not. Keep both as
+  identity accents unless final composited text is independently tested.
+- Slate is decorative on Void, not body text. On the supplied light token it reaches
+  5.43:1 and may be used only if the actual host surface matches and is tested.
+- Do not substitute identity accents for dashboard success, warning, missed-block,
+  or error colors. Brand and operational state remain separate information systems.
+- Ratios are WCAG relative-luminance calculations on tokens, not shaded render pixels.
 
 ## Typography
 
-No font is bundled or used to make the geometry. Use host-system fallbacks:
+No font is bundled, loaded by Blender, or baked into an asset. Use host fallbacks:
 
 ```css
 --font-brand: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -86,110 +110,98 @@ No font is bundled or used to make the geometry. Use host-system fallbacks:
 ```
 
 - Product name: `NosNode Seer`.
+- Descriptor: `Cosmos validator monitoring & alerts`.
 - Operator brand in text: `NosNode🔮`.
-- Do not convert the crystal-ball emoji into Blender geometry or rasterize it into
-  the mark. Emoji rendering is platform/font dependent and is not reproducible.
-- Use a 600–700 weight for a product heading and normal system weight for dense
-  monitoring data. Keep chain heights and identifiers monospaced.
-- Always provide the plain-text accessible name “NosNode Seer” when the mark is the
-  only visible identity.
+- The emoji is a text convention only. Do not trace, rasterize, or convert it into
+  Blender geometry; emoji artwork is platform/font dependent.
+- Provide the accessible text name “NosNode Seer” whenever the mark stands alone.
 
 ## Spacing and size
 
-- Clear space around the square mark: at least one-sixth of the mark's rendered
-  width on every side. The supplied canvases already contain internal breathing
-  room; external UI padding is still required.
-- Normal UI minimum: 32 CSS pixels.
-- Absolute fallback: the supplied 16×16 favicon only. It was inspected at native
-  size and preserves the diamond silhouette plus central aperture; do not derive an
-  8×8 or smaller version.
-- Keep the mark square. Do not crop the north beacon, lower observatory point, or
-  side nodes.
-- The wide hero is 8:3. Crop only from the extreme right if a narrower derivative
-  is unavoidable; never crop through the validator core or protective rings.
-- Treat the hero as a standalone banner. Do not place dense dashboard data over it.
-  If a title must overlay it, add a solid/semitransparent Void scrim and re-test the
-  final composited contrast.
+- Keep clear space around the square mark equal to at least one-sixth of its rendered
+  width. Supplied canvases include internal breathing room; host UI padding is still
+  required.
+- Normal UI minimum: 32 CSS pixels using the supplied 32×32 icon.
+- Absolute fallback: the supplied 16×16 icon. Its galaxy becomes a broad violet/warm
+  core by design, but the round orb and two-row pedestal remain separate. Do not make
+  an 8×8 derivative.
+- Keep the full orb and pedestal together. Never crop the sphere rim or base.
+- The hero is 8:3. Its crystal ball occupies the left third and the right half is the
+  safest title zone. Add a Void scrim if a specific host composition needs stronger
+  text contrast, then test the final composite.
+- The standalone background is 16:9 and has no central logo. Crop only after checking
+  that overlay copy remains on a quiet region.
 
 ## Dark and light use
 
-The transparent mark has a Midnight structural silhouette, so it remains distinct
-on both the default dark dashboard and a light surface. Preferred usage is on Void.
-On a light surface, use the full-color mark unchanged; do not add a white keyline or
-shadow. Fully transparent pixels in every supplied raster have RGB `(0,0,0)` and
-all image edges are alpha-clear, preventing light/dark fringe halos.
+Preferred usage is on Void. The transparent mark also remains distinct on a light
+surface because the Midnight globe and pedestal retain their silhouette while the
+cyan rim defines the glass edge. Use the full-color mark unchanged; do not add a
+white keyline, drop shadow, or matte.
 
-The current upstream dashboard was inspected before design:
-
-- `docs/dash.png` is 871×738 and shows a dense, dark, headerless status view;
-- `td2/static/index.html` defaults to UIkit `uk-background-secondary uk-light`;
-- the existing toggle changes the body/canvas/table/legend to light classes;
-- its monitoring canvas is declared 4,735 pixels wide inside a 4,835-pixel
-  overflow region, the legend is 700×32, and the log panel is 300 pixels tall;
-- the source explicitly supports dark and light modes.
-
-The integration lead should therefore prefer a compact 24–32 pixel identity slot
-or a separate hero placement rather than stealing horizontal space from the block
-grid. This draft intentionally does not choose or implement that runtime placement.
+Every transparent raster has alpha-clear image edges and `(0,0,0)` RGB wherever
+alpha is exactly zero. This prevents matte-colored halos on both tested surfaces.
+The supplied hero and space backgrounds are opaque RGB assets.
 
 ## Usage
 
 Do:
 
 - use the transparent mark on a quiet solid surface;
-- use the WebP hero where modern browser support is available and PNG as fallback;
-- preserve the central aperture as the highest-contrast feature;
-- keep abstract constellation nodes unlabeled unless adjacent UI text identifies a
-  monitored chain;
-- use meaningful alt text, for example: “NosNode Seer validator watchtower”.
+- use dedicated favicon files instead of downsampling the detailed 1024 mark;
+- retain the round glass orb and visible pedestal as one silhouette;
+- preserve the natural spiral, starfield, and abstract constellation hierarchy;
+- use the WebP hero/backgrounds where supported and the PNG hero only as fallback;
+- use meaningful alt text such as “NosNode Seer crystal ball containing a cosmos”.
 
 Do not:
 
-- rotate, skew, stretch, outline, bevel again, or crop the mark;
-- add rainbow gradients, bloom, particle animation, autoplay, lens flares, or a
-  pulsing “crypto neon” treatment;
-- replace constellation nodes with Cosmos, Tenderduty, wallet, exchange, validator,
-  or chain logos;
-- insert a coin glyph, token ticker, wallet badge, or exchange mark into the orb;
-- bake `🔮` or any other font glyph into geometry;
-- recolor status alerts to match the identity;
-- imply Cosmos SDK, Tendermint, Tenderduty, a wallet, an exchange, or any chain has
-  endorsed the mark.
+- restore or combine the diamond shield, watchtower rails, eye aperture, bow/insect
+  finial, or rejected beacon geometry with this mark;
+- rotate, skew, stretch, over-crop, re-outline, or add another bevel to the mark;
+- add a Cosmos Hub atom, chain, validator, wallet, exchange, token, or coin logo;
+- add copied emoji art, external textures/models, stock art, AI-generated imagery,
+  lens flares, heavy bloom, animated particles, or generic rainbow crypto neon;
+- recolor operational alerts to match the violet/magenta/cyan identity palette;
+- imply endorsement by Cosmos Hub, Tendermint, Tenderduty, a wallet, exchange, or
+  monitored chain.
 
 ## Reproduction
 
-### Receipt
+### Blender receipt
 
 - Binary: `/usr/bin/blender`
-- Version: `Blender 4.0.2`
+- Version: `Blender 4.0.2` (the generator fails closed on any other version)
 - Engine: Eevee (`BLENDER_EEVEE`)
 - Deterministic seed: `260718`
 - Samples: 64 render / 32 viewport
-- Ambient occlusion: enabled; distance `3.0`, factor `1.2`
-- Bloom: disabled
-- Color management: AgX, look `None`, exposure `0.25`, gamma `1.0`
-- Square camera: orthographic scale `7.8`; 1024×1024 master; transparent film
-- Hero camera: orthographic scale `22.8`; 1920×720 master; opaque field
-- Output: 8-bit PNG, fixed 100% scale, pixel aspect 1:1, PNG compression 15
-- Optimization receipt: Python 3.11.15, Pillow 12.2.0; Lanczos resize; PNG
-  optimize/compression 9; lossless exact WebP mark; WebP hero quality 88/method 6
-- Observed warm-run wall time on the authoring host: Blender build + both master
-  renders `1.91s`; optimization `2.74s`. Timing varies by host; hashes and
-  dimensions are the verification gates.
+- Ambient occlusion: enabled; distance `3.0`, factor `1.15`
+- Bloom: disabled; no compositor glow or animation
+- World: explicit `#02030B`, strength `0.08`
+- Color management: AgX, look `None`, exposure `0.15`, gamma `1.0`
+- Dither intensity: `1.0`
+- Detailed/icon cameras: orthographic scale `7.45`
+- Hero/space cameras: orthographic scale `24.0`
+- Masters: detailed mark 1024×1024 RGBA; simplified icon 1024×1024 RGBA;
+  hero 1920×720 RGB; standalone space 1920×1080 RGB
+- Output: 8-bit PNG, fixed 100% scale, square pixels, compression `15`
+- Final authoring run: Blender `4.75s`; optimization `3.66s` on this host
+- Optimization: Python 3.11.15, Pillow 12.2.0, Lanczos; PNG optimize/compression 9;
+  lossless exact WebP mark; hero WebP quality 80/method 6; space WebP quality
+  70/68, method 6
 
-The Blender scene contains only generated meshes, curves, materials, lights, and
-cameras. There are no external textures, linked libraries, fonts, simulations,
-compositor caches, animations, or packed third-party files.
+The scene contains only generated meshes, curves, procedural shader nodes, authored
+materials, lights, and cameras. It has no file images, external textures, linked
+libraries, font objects, actions, simulations, caches, or packed third-party files.
 
 ### Rebuild checked-in files
 
-From the repository root, with Blender 4.0.2 and the pinned Pillow dependency:
+From the repository root:
 
 ```bash
 python3 -m venv /tmp/nosnode-seer-venv
 /tmp/nosnode-seer-venv/bin/pip install -r branding/requirements.txt
 
-mkdir -p branding/.render
 /usr/bin/blender --background --factory-startup \
   --python branding/scripts/generate_nosnode_seer.py -- \
   --output-dir branding/.render \
@@ -201,63 +213,55 @@ mkdir -p branding/.render
 
 /tmp/nosnode-seer-venv/bin/python branding/scripts/verify_assets.py \
   --asset-dir branding/assets
+
+/usr/bin/blender --background branding/nosnode-seer.blend \
+  --python branding/scripts/verify_blend.py
 ```
 
-`branding/.render/`, Blender backup files, Python caches, and bytecode are ignored.
-Do not commit render masters or temp output.
+`branding/.render/`, Blender backups, Python caches, and bytecode are ignored. Do
+not commit render masters or QA montages.
 
-### Clean-room verification without touching tracked files
+### Clean-clone receipt
 
-```bash
-TMP_DIR="$(mktemp -d)"
-/usr/bin/blender --background --factory-startup \
-  --python branding/scripts/generate_nosnode_seer.py -- \
-  --output-dir "$TMP_DIR/render" \
-  --blend-output "$TMP_DIR/nosnode-seer.blend"
+Clean rebuild performed from commit
+`088310892aff2ac9f1c74590c58dfa4e8e25deb6` on 2026-07-19 UTC:
 
-python3 branding/scripts/optimize_assets.py \
-  --input-dir "$TMP_DIR/render" \
-  --output-dir "$TMP_DIR/assets"
-python3 branding/scripts/verify_assets.py --asset-dir "$TMP_DIR/assets"
+- tracked status before and after: empty;
+- Blender generation and four masters: `4.73s`;
+- pinned Pillow optimization: `3.67s`;
+- `verify_assets.py`: `VERIFY OK`;
+- all **11** generated PNG/WebP/SVG files matched checked-in assets byte-for-byte;
+- rebuilt scene verification: Blender 4.0.2/Eevee, 341 objects, five exact named
+  collections with counts 96/20/122/96/7, four exact cameras, frame 1 only, 64/32
+  samples, relative render path, and zero actions, linked libraries, file images, or
+  font objects.
 
-for file in branding/assets/*; do
-  cmp "$file" "$TMP_DIR/assets/$(basename "$file")"
-done
-```
-
-The delivered PNG, WebP, and SVG files are expected to compare byte-for-byte.
-Blender stores the absolute save location in `.blend` metadata, so a regenerated
-`.blend` written under another checkout can have a different binary hash despite
-an identical scene. The `.blend` hash below authenticates the checked-in source;
-verify a clean rebuild structurally (engine, collections, object count, no links,
-fonts, images, or animation) and verify its rendered assets byte-for-byte.
-
-Clean-clone receipt on 2026-07-18: empty status before and after; Blender `1.91s`;
-optimization `2.78s`; all nine generated assets passed `verify_assets.py` and
-`cmp`; rebuilt scene had 164 objects, three named collections, zero actions, zero
-linked libraries, zero file images, and zero font objects.
-
-The generator fails closed when Blender is not exactly 4.0.2. This avoids silently
-publishing a materially different render from another Blender/Eevee release.
+Blender stores save-location/author-host metadata in `.blend` files, so a clean
+rebuild written under another path may have a different binary hash. The checked-in
+`.blend` hash authenticates this delivered source; exact scene invariants and
+byte-identical rendered delivery files are the reproducibility contract.
 
 ## Inventory and checksums
 
-Generated web/doc assets total **951,684 bytes** against a verifier budget of
-3,500,000 bytes. Including the editable `.blend`, binary assets total
-**3,132,180 bytes**.
+Generated delivery assets total **1,103,499 bytes** against the verifier's
+4,500,000-byte source/review budget. Including the editable `.blend`, delivered
+binary material totals **8,705,055 bytes**. This broad source package budget is
+separate from the **51,885-byte** integration subset.
 
 | File | Dimensions / mode | Bytes | SHA-256 |
 |---|---:|---:|---|
-| `branding/nosnode-seer.blend` | Blender source | 2,180,496 | `e8d0826d1345e60b255e0bc89c590fd87c348e3159369cbdab5b29ee7af05259` |
-| `branding/assets/nosnode-seer-mark-1024.png` | 1024×1024 RGBA | 325,680 | `e4835f436b855b8e7e235232a9e1fbcb69c1bfb77ec8512efdbaa139c36ecb08` |
-| `branding/assets/nosnode-seer-mark-512.webp` | 512×512 RGBA | 67,260 | `435d1ba36c718818c4698506fe5b15b96695e384b9eb161702d84a85e66a0630` |
-| `branding/assets/nosnode-seer-favicon-256.png` | 256×256 RGBA | 43,405 | `e09ef6c95c5cc9411b3e57ac1ec54ff8a5e29ea2d32815e27dd92d9921b7b580` |
-| `branding/assets/nosnode-seer-favicon-64.png` | 64×64 RGBA | 5,494 | `c1d689cffacc374e87d2096251194370576030334d7d9563dc7f07e0de13675a` |
-| `branding/assets/nosnode-seer-favicon-32.png` | 32×32 RGBA | 1,774 | `5eeab66a6b09b4598a63c24e1266c147561663e75b1599193853bb665d1f6519` |
-| `branding/assets/nosnode-seer-favicon-16.png` | 16×16 RGBA | 657 | `accca7da23f2c16e6dc8168351628f8e312d41b3d0b8f2a2f129fb9e100ab2b2` |
-| `branding/assets/nosnode-seer-hero-1920x720.webp` | 1920×720 RGB | 41,004 | `72b8ebc83dc88bb7646d5b72f182a05022af19a47170b015d81cf2de9bfa6b14` |
-| `branding/assets/nosnode-seer-hero-1280x480.png` | 1280×480 RGB | 465,352 | `4fa9f4b7ecee7571bee6cfb3fcfe3450ad2bc840e2067dfb54aa512aed78b816` |
-| `branding/assets/nosnode-seer-mark.svg` | 512×512 vector | 1,058 | `fb3c9ce1e5e5588b24031bc3519e67f286626b20dee36018397d95cb44e3f616` |
+| `branding/nosnode-seer.blend` | Blender source | 7,601,556 | `77d25909ecc43cb9a8f9695a3574328db2864c7fe2c44151bda08a34649a9072` |
+| `branding/assets/nosnode-seer-mark-1024.png` | 1024×1024 RGBA | 426,355 | `1e82961d9251168016aceb286c765487805fda920b176eaced2a8a272f7a302e` |
+| `branding/assets/nosnode-seer-mark-512.webp` | 512×512 RGBA | 98,932 | `15cf08f08301f614ec36ccdceff0a3de63cc1dde40421be36658562d7aa7efe4` |
+| `branding/assets/nosnode-seer-favicon-256.png` | 256×256 RGBA | 42,903 | `82560845814bd5221687e04f77bc7d835145267598ac4cad3bf4499d5e7ac00d` |
+| `branding/assets/nosnode-seer-favicon-64.png` | 64×64 RGBA | 5,800 | `71723432e014eacb75c9df7d8af2dc7cf66186ce4a40766116659c977eeab5bb` |
+| `branding/assets/nosnode-seer-favicon-32.png` | 32×32 RGBA | 2,089 | `92babc1452b78d6d3c09f84b1b9be564b3ef9f329447fdae818bf3b10211fd54` |
+| `branding/assets/nosnode-seer-favicon-16.png` | 16×16 RGBA | 713 | `79e9044adf4e64e85331da6cd0c3760aa0e6620708e5a701fb44ff000bdff6fa` |
+| `branding/assets/nosnode-seer-hero-1920x720.webp` | 1920×720 RGB | 31,376 | `a8017dcd7bddbedd552b383a5f96030384fd783c571e7cab00115d5e95b4cd01` |
+| `branding/assets/nosnode-seer-hero-1280x480.png` | 1280×480 RGB | 466,815 | `1ed32fad92a3dbb8a71a591553f13bf8951f2c02ca4edba654645b6d0c5147c3` |
+| `branding/assets/nosnode-seer-space-1920x1080.webp` | 1920×1080 RGB | 16,702 | `f23ace572f9419c67e21e9b9b99160e8a863460f13e720eb948e1b6210aaa26e` |
+| `branding/assets/nosnode-seer-space-1280x720.webp` | 1280×720 RGB | 10,096 | `ebe7f7e9e9544689527d6b1517e145b8fa99f2ef666ca350fa0760cbe1cae702` |
+| `branding/assets/nosnode-seer-mark.svg` | 512×512 vector | 1,718 | `a4e364a9e660225acc0c4ee2b74b424edfa75ee9e7b20908528a5ee646aaf91e` |
 
 Recompute with:
 
@@ -268,36 +272,49 @@ python3 branding/scripts/verify_assets.py --asset-dir branding/assets --json
 
 ## Visual QA receipt
 
-The rendered files were inspected directly, not inferred from the scene:
+The delivery files were inspected directly, not inferred from source code or scene
+structure:
 
-- 1024 mark: complete silhouette; no clipped rail/beacon/base; orb, aperture, and
-  watchtower hierarchy remain distinct.
-- 512 mark composited on `#030512` and `#F1F4FF`: no visible transparency fringe;
-  Midnight structure preserves the light-background silhouette.
-- 32×32 and 16×16 favicons: inspected at native-pixel intent; the diamond and
-  central seer aperture survive. The 16×16 file is intentionally the floor.
-- Alpha QA: image edges are clear and every fully transparent pixel has black RGB,
-  avoiding matte-colored halos.
-- Hero: complete validator core and guard rings on the left; six distinct abstract
-  constellations on the right; no clipped geometry, text, logos, or banding visible
-  at delivery size. Line energy remains subordinate to the core.
-- Automated QA verifies dimensions, formats, transparency, visible coverage,
-  edge alpha, SVG constraints, per-file budgets, total budget, and SHA-256 output.
+- 1024 mark: full round sphere and complete three-part pedestal; continuous spiral
+  galaxy, warm core, star depth, orbit, and abstract constellation visible; no clip;
+  no diamond, shield, eye, rails, or finial.
+- Glass: cyan edge and two restrained reflected crescents establish refraction while
+  the cosmos remains clear. Bloom is off; the rim does not depend on a glow effect.
+- Dark/light composites: Midnight globe and pedestal preserve the silhouette on
+  both `#02030B` and `#EEF4FF`; no matte fringe was visible.
+- 32×32 and 16×16: inspected at native-pixel intent and nearest-neighbor zoom on both
+  surfaces. A round orb and separate base remain identifiable. Full star detail is
+  intentionally replaced by two broad galaxy sweeps and seven larger stars.
+- Hero: complete ball and pedestal at left; dense internal cosmos; visible procedural
+  indigo/magenta/cyan nebula; sparse stars and constellations; no baked text; right
+  half remains operationally quiet for overlay copy.
+- Standalone background: no central logo, no text, no animation, no obvious banding
+  or blocking at delivery size, with substantial dark overlay area.
+- First render iteration exposed partially occluded spiral arms, muddy glass-specular
+  ovals, polygonal field stars, and a weak 16 px base. The source was revised before
+  delivery: arms moved visibly inside the front glass layer, glass specular/alpha
+  reduced, field stars rounded, and the icon pedestal brightened and thickened.
+- Automated QA covers exact filenames, dimensions, formats, alpha expectations,
+  neutral transparent RGB, edge alpha, crystal-ball/pedestal occupancy, SVG
+  constraints, per-file budgets, total budget, the strict integration budget, and
+  SHA-256 inventory.
+
+Remaining caveat: at 16 px the internal galaxy necessarily resolves as a compact
+violet/warm sweep rather than a detailed starfield. The orb-plus-base silhouette is
+the recognition contract at that size; 32 px is preferred for normal UI.
 
 ## Licensing and provenance
 
-The repository's upstream `LICENSE` is preserved unchanged: MIT License,
-Copyright (c) 2021 Todd G.
+The upstream `LICENSE` remains unchanged: MIT License, Copyright (c) 2021 Todd G.
 
-The NosNode Seer visual package is entirely original procedural work created for
-this repository. It was built from primitive meshes, curves, numeric coordinates,
-and authored materials in `branding/scripts/generate_nosnode_seer.py`. It does not
-copy or embed the Cosmos, Tendermint, Tenderduty, Block Pane, NosNode validator,
-wallet, exchange, or chain logos. Existing dashboard visuals were inspected only
-to understand density, dimensions, and dark/light behavior.
+This visual package is original procedural work made for this repository from Blender
+primitives, generated curves, shader nodes, numeric coordinates, and authored
+materials in `branding/scripts/generate_nosnode_seer.py`. It does not copy or embed
+the Cosmos Hub, Tendermint, Tenderduty, Block Pane, NosNode validator, wallet,
+exchange, or chain logos.
 
-No stock art, texture, external image, system font, AI-generated image, downloaded
-Blender build, or third-party model is included. The work is distributed with the
-repository under its existing MIT terms. Brand/trademark use remains subject to
-NosNode's separate approval; inclusion in this draft is not an endorsement by any
-chain or upstream project.
+No stock art, external texture, external model, system font, AI-generated image,
+downloaded Blender build, emoji artwork, or third-party visual source is included.
+Existing dashboard material was inspected only for integration density and dark/light
+context. Brand/trademark use remains subject to NosNode approval; inclusion in this
+draft does not imply endorsement by any chain or upstream project.
