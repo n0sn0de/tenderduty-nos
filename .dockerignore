@@ -1,12 +1,6 @@
 .git
 .github
 .idea
-.hermes
-.nosnode-seer-state.json
 .tenderduty-state.json
-caddy
 docs
-worktrees
-README.md
 tenderduty
-nosnode-seer
