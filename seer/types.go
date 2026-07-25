@@ -3,7 +3,6 @@ package seer
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +35,10 @@ type Config struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	alarms     *alarmCache
+	stateMux   sync.RWMutex
+	ingressMux sync.Mutex
+	ingressWG  sync.WaitGroup
+	accepting  bool
 
 	// EnableDash enables the web dashboard
 	EnableDash bool `yaml:"enable_dashboard"`
@@ -83,12 +86,17 @@ type savedState struct {
 // ChainConfig represents a validator to be monitored on a chain, it is somewhat of a misnomer since multiple
 // validators can be monitored on a single chain.
 type ChainConfig struct {
+	stateMux                 *sync.RWMutex
+	localStateMux            sync.RWMutex
+	rpcMux                   sync.Mutex
+	monitoringMux            sync.RWMutex
+	connectionMux            sync.Mutex
 	name                     string
-	wsclient                 *TmConn       // custom websocket client to work around wss:// bugs in tendermint
-	client                   *rpchttp.HTTP // legit tendermint client
-	noNodes                  bool          // tracks if all nodes are down
-	valInfo                  *ValInfo      // recent validator state, only refreshed every few minutes
-	lastValInfo              *ValInfo      // use for detecting newly-jailed/tombstone
+	wsclient                 websocketConnection // custom websocket client to work around wss:// bugs in tendermint
+	client                   *rpchttp.HTTP       // legit tendermint client
+	noNodes                  bool                // tracks if all nodes are down
+	valInfo                  *ValInfo            // recent validator state, only refreshed every few minutes
+	lastValInfo              *ValInfo            // use for detecting newly-jailed/tombstone
 	blocksResults            []int
 	lastError                string
 	lastBlockTime            time.Time
@@ -127,12 +135,17 @@ type ChainConfig struct {
 
 // mkUpdate returns the info needed by prometheus for a gauge.
 func (cc *ChainConfig) mkUpdate(t metricType, v float64, node string) *promUpdate {
+	valInfo, _ := cc.validatorInfoSnapshot()
+	moniker := ""
+	if valInfo != nil {
+		moniker = valInfo.Moniker
+	}
 	return &promUpdate{
 		metric:   t,
 		counter:  v,
 		name:     cc.name,
 		chainId:  cc.ChainId,
-		moniker:  cc.valInfo.Moniker,
+		moniker:  moniker,
 		endpoint: node,
 	}
 }
@@ -259,12 +272,15 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 
 	var wantsPublic bool
 	for k, v := range c.Chains {
+		stateMux := v.durableStateMux()
+		stateMux.Lock()
 		if v.blocksResults == nil {
 			v.blocksResults = make([]int, showBLocks)
 			for i := range v.blocksResults {
 				v.blocksResults[i] = -1
 			}
 		}
+		stateMux.Unlock()
 		if v.name == "" {
 			v.name = k
 		}
@@ -272,7 +288,7 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 			wantsPublic = true
 		}
 
-		v.valInfo = &ValInfo{Moniker: "not connected"}
+		v.publishValidatorInfo(&ValInfo{Moniker: "not connected"}, false)
 
 		// the bools for enabling alerts are deprecated with full configs preferred,
 		// don't break if someone is still using them:
@@ -326,20 +342,21 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 			problems = append(problems, fmt.Sprintf("warn: %20s has no notifications configured", k))
 		}
 		if td.EnableDash {
+			valInfo, _ := v.validatorInfoSnapshot()
 			td.updateChan <- &dash.ChainStatus{
 				MsgType:      "status",
 				Name:         v.name,
 				ChainId:      v.ChainId,
-				Moniker:      v.valInfo.Moniker,
-				Bonded:       v.valInfo.Bonded,
-				Jailed:       v.valInfo.Jailed,
-				Tombstoned:   v.valInfo.Tombstoned,
-				Missed:       v.valInfo.Missed,
-				Window:       v.valInfo.Window,
+				Moniker:      valInfo.Moniker,
+				Bonded:       valInfo.Bonded,
+				Jailed:       valInfo.Jailed,
+				Tombstoned:   valInfo.Tombstoned,
+				Missed:       valInfo.Missed,
+				Window:       valInfo.Window,
 				Nodes:        len(v.Nodes),
 				HealthyNodes: 0,
 				ActiveAlerts: 0,
-				Blocks:       v.blocksResults,
+				Blocks:       v.blockResultsSnapshot(),
 			}
 		}
 	}
@@ -489,93 +506,25 @@ func loadConfig(yamlFile, stateFile, chainConfigDirectory string, password *stri
 	c.statsChan = make(chan *promUpdate, len(c.Chains)*2)
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
-	// handle cached data. FIXME: incomplete.
-	c.alarms = &alarmCache{
-		SentPdAlarms:  make(map[string]time.Time),
-		SentTgAlarms:  make(map[string]time.Time),
-		SentDiAlarms:  make(map[string]time.Time),
-		SentSlkAlarms: make(map[string]time.Time),
-		AllAlarms:     make(map[string]map[string]time.Time),
-		notifyMux:     sync.RWMutex{},
-	}
+	c.alarms = newAlarmCache()
+	c.bindDurableState()
+	alarms = c.alarms
 
-	//#nosec -- variable specified on command line
-	sf, e := os.OpenFile(stateFile, os.O_RDONLY, 0600)
+	saved, stateInfo, e := loadState(stateFile)
 	if e != nil {
-		l("could not load saved state", e.Error())
+		return nil, e
 	}
-	b, e := io.ReadAll(sf)
-	_ = sf.Close()
-	if e != nil {
-		l("could not read saved state", e.Error())
-	}
-	saved := &savedState{}
-	e = json.Unmarshal(b, saved)
-	if e != nil {
-		l("could not unmarshal saved state", e.Error())
-	}
-	for k, v := range saved.Blocks {
-		if c.Chains[k] != nil {
-			c.Chains[k].blocksResults = v
+	if stateInfo.Source != "" {
+		switch {
+		case stateInfo.RecoveredFromBackup:
+			l("recovered durable state from rollback backup", stateInfo.Source)
+		case stateInfo.Legacy:
+			l("loaded legacy durable state", stateInfo.Source)
+		default:
+			l(fmt.Sprintf("loaded durable state version %d", stateInfo.Version), stateInfo.Source)
 		}
 	}
-
-	// restore alarm state to prevent duplicate alerts
-	if saved.Alarms != nil {
-		if saved.Alarms.SentTgAlarms != nil {
-			alarms.SentTgAlarms = saved.Alarms.SentTgAlarms
-			clearStale(alarms.SentTgAlarms, "telegram", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.SentPdAlarms != nil {
-			alarms.SentPdAlarms = saved.Alarms.SentPdAlarms
-			clearStale(alarms.SentPdAlarms, "PagerDuty", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.SentDiAlarms != nil {
-			alarms.SentDiAlarms = saved.Alarms.SentDiAlarms
-			clearStale(alarms.SentDiAlarms, "Discord", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.SentSlkAlarms != nil {
-			alarms.SentSlkAlarms = saved.Alarms.SentSlkAlarms
-			clearStale(alarms.SentSlkAlarms, "Slack", c.Pagerduty.Enabled, staleHours)
-		}
-		if saved.Alarms.AllAlarms != nil {
-			alarms.AllAlarms = saved.Alarms.AllAlarms
-			for _, alrm := range saved.Alarms.AllAlarms {
-				clearStale(alrm, "dashboard", c.Pagerduty.Enabled, staleHours)
-			}
-		}
-	}
-
-	// we need to know if the node was already down to clear alarms
-	if saved.NodesDown != nil {
-		for k, v := range saved.NodesDown {
-			for nodeUrl := range v {
-				if !v[nodeUrl].IsZero() {
-					if c.Chains[k] != nil {
-						for j := range c.Chains[k].Nodes {
-							if c.Chains[k].Nodes[j].Url == nodeUrl {
-								c.Chains[k].Nodes[j].down = true
-								c.Chains[k].Nodes[j].wasDown = true
-								c.Chains[k].Nodes[j].downSince = v[nodeUrl]
-							}
-						}
-					}
-				}
-			}
-		}
-		// now we need to know if all RPC endpoints were down.
-		for k, v := range c.Chains {
-			downCount := 0
-			for j := range v.Nodes {
-				if v.Nodes[j].down {
-					downCount += 1
-				}
-			}
-			if downCount == len(c.Chains[k].Nodes) {
-				c.Chains[k].noNodes = true
-			}
-		}
-	}
+	restoreSavedState(c, saved)
 
 	return c, nil
 }

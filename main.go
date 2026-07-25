@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	seer "github.com/n0sn0de/tenderduty-nos/seer"
@@ -14,9 +16,11 @@ import (
 )
 
 const (
-	binaryName       = "nosnode-seer"
-	defaultStateFile = ".nosnode-seer-state.json"
-	legacyStateFile  = ".tenderduty-state.json"
+	binaryName                  = "nosnode-seer"
+	defaultStateFile            = ".nosnode-seer-state.json"
+	legacyStateFile             = ".tenderduty-state.json"
+	canonicalContainerDirectory = "/var/lib/nosnode-seer"
+	legacyContainerDirectory    = "/var/lib/tenderduty"
 )
 
 var (
@@ -135,6 +139,34 @@ func fileExists(name string) bool {
 	return err == nil
 }
 
+func legacyInvocationWorkingDirectory(argv0, currentDirectory string, args []string, configEnvironment string, exists func(string) bool) string {
+	if filepath.Base(argv0) == "tenderduty" {
+		if exists(legacyContainerDirectory) {
+			return legacyContainerDirectory
+		}
+		return ""
+	}
+	if currentDirectory != canonicalContainerDirectory || configEnvironment != "" || exists("config.yml") {
+		return ""
+	}
+	for _, arg := range args {
+		if arg == "-f" || arg == "--f" || strings.HasPrefix(arg, "-f=") || strings.HasPrefix(arg, "--f=") {
+			return ""
+		}
+	}
+	if exists(filepath.Join(legacyContainerDirectory, "config.yml")) {
+		return legacyContainerDirectory
+	}
+	return ""
+}
+
 func main() {
+	currentDirectory, _ := os.Getwd()
+	if directory := legacyInvocationWorkingDirectory(os.Args[0], currentDirectory, os.Args[1:], os.Getenv("CONFIG"), fileExists); directory != "" {
+		if err := os.Chdir(directory); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s stopped: cannot use deprecated container state directory: %v\n", seer.ProductName, err)
+			os.Exit(1)
+		}
+	}
 	os.Exit(runApp(os.Args[1:], os.Stdout, os.Stderr, os.Getenv, fileExists))
 }

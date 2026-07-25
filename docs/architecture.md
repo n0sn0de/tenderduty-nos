@@ -43,7 +43,7 @@ Both are controlled by existing YAML keys. A disabled listener is not opened. Th
 
 ## State
 
-The state JSON stores recent block results and alert-suppression timestamps. It contains no signing key, but it may reveal operational history. The new default is `.nosnode-seer-state.json`; the legacy `.tenderduty-state.json` schema is consumed unchanged through deterministic fallback.
+The state JSON stores recent block results and alert-suppression timestamps. It contains no signing key, but it may reveal operational history. The new default is `.nosnode-seer-state.json`; the legacy `.tenderduty-state.json` fields are consumed in place, and new checkpoints add only the top-level `version` field described in the [migration contract](migration.md#durable-state-and-rollback-contract).
 
 ## Dashboard assets
 

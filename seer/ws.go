@@ -13,13 +13,27 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 const (
 	QueryNewBlock string = `tm.event='NewBlock'`
 	QueryVote     string = `tm.event='Vote'`
 )
+
+type websocketConnection interface {
+	Close() error
+	SetCompressionLevel(int) error
+	ReadMessage() (int, []byte, error)
+	WriteMessage(int, []byte) error
+}
+
+var newWebSocketConnection = func(ctx context.Context, endpoint string, allowInsecure bool) (websocketConnection, error) {
+	return NewClientContext(ctx, endpoint, allowInsecure)
+}
 
 // StatusType represents the various possible end states. Prevote and Precommit are special cases, where the node
 // monitoring for misses did see them, but the proposer did not include in the block.
@@ -67,132 +81,159 @@ func (wsr WsReply) Value() []byte {
 	return wsr.Result.Data.Value
 }
 
-// WsRun is our main entrypoint for the websocket listener. In the Run loop it will block, and if it exits force a
-// renegotiation for a new client.
-func (cc *ChainConfig) WsRun() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var err error
+// WsRun is our main entrypoint for the websocket listener. It blocks until the parent is canceled or the client exits.
+func (cc *ChainConfig) WsRun(parent context.Context) {
+	ctx, cancel := context.WithCancel(parent)
+	var workers sync.WaitGroup
+	defer func() {
+		cancel()
+		cc.closeWebSocket()
+		workers.Wait()
+	}()
+
+	var client *rpchttp.HTTP
+	var startupValInfo *ValInfo
 	started := time.Now()
 	for {
-		// wait until our RPC client is connected and running. We will use the same URL for the websocket
-		if cc.client == nil || cc.valInfo == nil || cc.valInfo.Conspub == nil {
-			if started.Before(time.Now().Add(-2 * time.Minute)) {
-				l(cc.name, "websocket client timed out waiting for a working rpc endpoint, restarting")
-				return
-			}
-			l("⏰ waiting for a healthy client for", cc.ChainId)
-			time.Sleep(30 * time.Second)
-			continue
+		client, startupValInfo, _ = cc.monitoringSnapshot()
+		if client != nil && startupValInfo != nil && startupValInfo.Conspub != nil {
+			break
 		}
-		break
+		if started.Before(time.Now().Add(-2 * time.Minute)) {
+			l(cc.name, "websocket client timed out waiting for a working rpc endpoint, restarting")
+			return
+		}
+		l("⏰ waiting for a healthy client for", cc.ChainId)
+		if !waitForContext(ctx, 30*time.Second) {
+			return
+		}
 	}
 
-	cc.wsclient, err = NewClient(cc.client.Remote(), true)
+	connection, err := newWebSocketConnection(ctx, client.Remote(), true)
 	if err != nil {
 		l(err)
-		cancel()
 		return
 	}
-	defer cc.wsclient.Close()
-	err = cc.wsclient.SetCompressionLevel(3)
-	if err != nil {
+	cc.connectionMux.Lock()
+	cc.wsclient = connection
+	cc.connectionMux.Unlock()
+	if err := connection.SetCompressionLevel(3); err != nil {
 		log.Println(err)
 	}
-
-	// This go func processes the results returned by the listeners. It has most of the logic on where data is sent,
-	// like dashboards or prometheus.
-	resultChan := make(chan StatusUpdate)
+	workers.Add(1)
 	go func() {
+		defer workers.Done()
+		<-ctx.Done()
+		cc.closeWebSocket()
+	}()
+
+	resultChan := make(chan StatusUpdate)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
 		var signState StatusType = -1
 		for {
 			select {
 			case update := <-resultChan:
+				valInfo, _ := cc.validatorInfoSnapshot()
+				if valInfo == nil {
+					continue
+				}
 				if update.Final && update.Height%20 == 0 {
 					l(fmt.Sprintf("🧊 %-12s block %d", cc.ChainId, update.Height))
 				}
-				if update.Status > signState && cc.valInfo.Bonded {
+				if update.Status > signState && valInfo.Bonded {
 					signState = update.Status
 				}
-				if update.Final {
-					cc.lastBlockNum = update.Height
-					now := time.Now()
-					previousBlockTime := cc.recordFinalBlock(now)
-					if td.Prom {
-						td.statsChan <- cc.mkUpdate(metricLastBlockSeconds, now.Sub(previousBlockTime).Seconds(), "")
+				if !update.Final {
+					continue
+				}
+				cc.lastBlockNum = update.Height
+				now := time.Now()
+				previousBlockTime := cc.recordFinalBlock(now)
+				if td.Prom {
+					if !td.emitStat(ctx, cc.mkUpdate(metricLastBlockSeconds, now.Sub(previousBlockTime).Seconds(), "")) {
+						return
 					}
-					info := getAlarms(cc.name)
-					cc.blocksResults = append([]int{int(signState)}, cc.blocksResults[:len(cc.blocksResults)-1]...)
-					if signState < 3 && cc.valInfo.Bonded {
-						warn := fmt.Sprintf("❌ warning      %s missed block %d on %s", cc.valInfo.Moniker, update.Height, cc.ChainId)
-						info += warn + "\n"
-						cc.lastError = time.Now().UTC().String() + " " + info
-						l(warn)
+				}
+				info := getAlarms(cc.name)
+				blocks := cc.recordBlockResult(int(signState))
+				if signState < StatusSigned && valInfo.Bonded {
+					warn := fmt.Sprintf("❌ warning      %s missed block %d on %s", valInfo.Moniker, update.Height, cc.ChainId)
+					info += warn + "\n"
+					cc.lastError = time.Now().UTC().String() + " " + info
+					l(warn)
+				}
+				switch signState {
+				case Statusmissed:
+					cc.statTotalMiss++
+					cc.statConsecutiveMiss++
+				case StatusPrecommit:
+					cc.statPrecommitMiss++
+					cc.statTotalMiss++
+					cc.statConsecutiveMiss++
+				case StatusPrevote:
+					cc.statPrevoteMiss++
+					cc.statTotalMiss++
+					cc.statConsecutiveMiss++
+				case StatusSigned:
+					cc.statTotalSigns++
+					cc.statConsecutiveMiss = 0
+				case StatusProposed:
+					cc.statTotalProps++
+					cc.statTotalSigns++
+					cc.statConsecutiveMiss = 0
+				}
+				signState = -1
+				healthyNodes := 0
+				for _, node := range cc.Nodes {
+					state := cc.nodeState(node)
+					if !state.down {
+						healthyNodes++
+					} else if !td.HideLogs {
+						info += "\n - " + state.lastMsg
 					}
-					switch signState {
-					case Statusmissed:
-						cc.statTotalMiss += 1
-						cc.statConsecutiveMiss += 1
-					case StatusPrecommit:
-						cc.statPrecommitMiss += 1
-						cc.statTotalMiss += 1
-						cc.statConsecutiveMiss += 1
-					case StatusPrevote:
-						cc.statPrevoteMiss += 1
-						cc.statTotalMiss += 1
-						cc.statConsecutiveMiss += 1
-					case StatusSigned:
-						cc.statTotalSigns += 1
-						cc.statConsecutiveMiss = 0
-					case StatusProposed:
-						cc.statTotalProps += 1
-						cc.statTotalSigns += 1
-						cc.statConsecutiveMiss = 0
+				}
+				switch {
+				case valInfo.Tombstoned:
+					info += "- validator is tombstoned\n"
+				case valInfo.Jailed:
+					info += "- validator is jailed\n"
+				}
+				cc.activeAlerts = td.alarmState().getCount(cc.name)
+				if td.EnableDash {
+					td.updateChan <- &dash.ChainStatus{
+						MsgType:      "status",
+						Name:         cc.name,
+						ChainId:      cc.ChainId,
+						Moniker:      valInfo.Moniker,
+						Bonded:       valInfo.Bonded,
+						Jailed:       valInfo.Jailed,
+						Tombstoned:   valInfo.Tombstoned,
+						Missed:       valInfo.Missed,
+						Window:       valInfo.Window,
+						Nodes:        len(cc.Nodes),
+						HealthyNodes: healthyNodes,
+						ActiveAlerts: cc.activeAlerts,
+						Height:       update.Height,
+						LastError:    info,
+						Blocks:       blocks,
 					}
-					signState = -1
-					healthyNodes := 0
-					for i := range cc.Nodes {
-						if !cc.Nodes[i].down {
-							healthyNodes += 1
-						} else if !td.HideLogs { // only show this info if sending logs, the point is not to leak host info
-							info += "\n - " + cc.Nodes[i].lastMsg
+				}
+				if td.Prom {
+					updates := []*promUpdate{
+						cc.mkUpdate(metricSigned, cc.statTotalSigns, ""),
+						cc.mkUpdate(metricProposed, cc.statTotalProps, ""),
+						cc.mkUpdate(metricMissed, cc.statTotalMiss, ""),
+						cc.mkUpdate(metricPrevote, cc.statPrevoteMiss, ""),
+						cc.mkUpdate(metricPrecommit, cc.statPrecommitMiss, ""),
+						cc.mkUpdate(metricConsecutive, cc.statConsecutiveMiss, ""),
+						cc.mkUpdate(metricUnealthyNodes, float64(len(cc.Nodes)-healthyNodes), ""),
+					}
+					for _, metric := range updates {
+						if !td.emitStat(ctx, metric) {
+							return
 						}
-					}
-					switch {
-					case cc.valInfo.Tombstoned:
-						info += "- validator is tombstoned\n"
-					case cc.valInfo.Jailed:
-						info += "- validator is jailed\n"
-					}
-					cc.activeAlerts = alarms.getCount(cc.name)
-					if td.EnableDash {
-						td.updateChan <- &dash.ChainStatus{
-							MsgType:      "status",
-							Name:         cc.name,
-							ChainId:      cc.ChainId,
-							Moniker:      cc.valInfo.Moniker,
-							Bonded:       cc.valInfo.Bonded,
-							Jailed:       cc.valInfo.Jailed,
-							Tombstoned:   cc.valInfo.Tombstoned,
-							Missed:       cc.valInfo.Missed,
-							Window:       cc.valInfo.Window,
-							Nodes:        len(cc.Nodes),
-							HealthyNodes: healthyNodes,
-							ActiveAlerts: cc.activeAlerts,
-							Height:       update.Height,
-							LastError:    info,
-							Blocks:       cc.blocksResults,
-						}
-					}
-
-					if td.Prom {
-						td.statsChan <- cc.mkUpdate(metricSigned, cc.statTotalSigns, "")
-						td.statsChan <- cc.mkUpdate(metricProposed, cc.statTotalProps, "")
-						td.statsChan <- cc.mkUpdate(metricMissed, cc.statTotalMiss, "")
-						td.statsChan <- cc.mkUpdate(metricPrevote, cc.statPrevoteMiss, "")
-						td.statsChan <- cc.mkUpdate(metricPrecommit, cc.statPrecommitMiss, "")
-						td.statsChan <- cc.mkUpdate(metricConsecutive, cc.statConsecutiveMiss, "")
-						td.statsChan <- cc.mkUpdate(metricUnealthyNodes, float64(len(cc.Nodes)-healthyNodes), "")
 					}
 				}
 			case <-ctx.Done():
@@ -201,62 +242,84 @@ func (cc *ChainConfig) WsRun() {
 		}
 	}()
 
+	consensusAddress := strings.ToUpper(hex.EncodeToString(startupValInfo.Conspub))
 	voteChan := make(chan *WsReply)
-	go handleVotes(ctx, voteChan, resultChan, strings.ToUpper(hex.EncodeToString(cc.valInfo.Conspub)))
-
-	blockChan := make(chan *WsReply)
+	workers.Add(1)
 	go func() {
-		e := handleBlocks(ctx, blockChan, resultChan, strings.ToUpper(hex.EncodeToString(cc.valInfo.Conspub)))
-		if e != nil {
-			l("🛑", cc.ChainId, e)
+		defer workers.Done()
+		handleVotes(ctx, voteChan, resultChan, consensusAddress)
+	}()
+	blockChan := make(chan *WsReply)
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := handleBlocks(ctx, blockChan, resultChan, consensusAddress); err != nil {
+			l("🛑", cc.ChainId, err)
 			cancel()
 		}
 	}()
 
-	// now that channel consumers are up, create our subscriptions and route data.
+	workers.Add(1)
 	go func() {
-		var msg []byte
-		var e error
+		defer workers.Done()
 		for {
-			_, msg, e = cc.wsclient.ReadMessage()
-			if e != nil {
-				l(e)
+			_, message, err := connection.ReadMessage()
+			if err != nil {
+				if ctx.Err() == nil {
+					l(err)
+				}
 				cancel()
 				return
 			}
 			reply := &WsReply{}
-			e = json.Unmarshal(msg, reply)
-			if e != nil {
+			if err := json.Unmarshal(message, reply); err != nil {
 				continue
 			}
+			var destination chan *WsReply
 			switch reply.Type() {
 			case `tendermint/event/NewBlock`:
-				blockChan <- reply
+				destination = blockChan
 			case `tendermint/event/Vote`:
-				voteChan <- reply
+				destination = voteChan
 			default:
-				// fmt.Println("unknown response", reply.Type())
+				continue
+			}
+			select {
+			case destination <- reply:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
 
 	for _, subscribe := range []string{QueryNewBlock, QueryVote} {
-		q := fmt.Sprintf(`{"jsonrpc":"2.0","method":"subscribe","id":1,"params":{"query":"%s"}}`, subscribe)
-		err = cc.wsclient.WriteMessage(websocket.TextMessage, []byte(q))
-		if err != nil {
+		query := fmt.Sprintf(`{"jsonrpc":"2.0","method":"subscribe","id":1,"params":{"query":"%s"}}`, subscribe)
+		if err := connection.WriteMessage(websocket.TextMessage, []byte(query)); err != nil {
 			l(err)
 			cancel()
-			break
-		}
-	}
-	l(fmt.Sprintf("⚙️ %-12s watching for NewBlock and Vote events via %s", cc.ChainId, cc.client.Remote()))
-	for {
-		select {
-		case <-cc.client.Quit():
-			cancel()
-		case <-ctx.Done():
 			return
 		}
+	}
+	l(fmt.Sprintf("⚙️ %-12s watching for NewBlock and Vote events via %s", cc.ChainId, client.Remote()))
+	select {
+	case <-client.Quit():
+		cancel()
+	case <-ctx.Done():
+	}
+}
+
+func (cc *ChainConfig) closeWebSocket() {
+	cc.connectionMux.Lock()
+	defer cc.connectionMux.Unlock()
+	if cc.wsclient != nil {
+		_ = cc.wsclient.Close()
+		cc.wsclient = nil
+	}
+}
+
+func (c *Config) closeWebSockets() {
+	for _, chain := range c.Chains {
+		chain.closeWebSocket()
 	}
 }
 
@@ -329,7 +392,11 @@ func handleBlocks(ctx context.Context, blocks chan *WsReply, results chan Status
 			} else if b.find(address) {
 				upd.Status = StatusSigned
 			}
-			results <- upd
+			select {
+			case results <- upd:
+			case <-ctx.Done():
+				return nil
+			}
 		case <-ctx.Done():
 			return nil
 		}
@@ -368,7 +435,11 @@ func handleVotes(ctx context.Context, votes chan *WsReply, results chan StatusUp
 				case "SIGNED_MSG_TYPE_PROPOSAL":
 					upd.Status = StatusProposed
 				}
-				results <- upd
+				select {
+				case results <- upd:
+				case <-ctx.Done():
+					return
+				}
 			}
 
 		case <-ctx.Done():
@@ -383,8 +454,13 @@ type TmConn struct {
 }
 
 // NewClient returns a websocket client.
-// FIXME: need to handle UDS and insecure TLS
 func NewClient(u string, allowInsecure bool) (*TmConn, error) {
+	return NewClientContext(context.Background(), u, allowInsecure)
+}
+
+// NewClientContext returns a websocket client whose dial is canceled with ctx.
+func NewClientContext(ctx context.Context, u string, allowInsecure bool) (*TmConn, error) {
+	// FIXME: need to handle UDS and insecure TLS
 	// dialUnix is used to determine if the connection is to a UDS and requires a custom dialer.
 	var dialUnix bool
 
@@ -428,7 +504,7 @@ func NewClient(u string, allowInsecure bool) (*TmConn, error) {
 	// case allowInsecure && endpoint.Scheme == "wss":
 
 	default:
-		conn, _, err = websocket.DefaultDialer.Dial(endpoint.String(), nil)
+		conn, _, err = websocket.DefaultDialer.DialContext(ctx, endpoint.String(), nil)
 		if err != nil {
 			return nil, fmt.Errorf("could not dial ws client to %s: %s", endpoint.String(), err.Error())
 		}

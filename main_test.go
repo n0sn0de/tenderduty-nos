@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,5 +56,26 @@ func TestVersionOutputUsesNosNodeIdentity(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("version output %q does not contain %q", stdout.String(), want)
 		}
+	}
+}
+
+func TestLegacyContainerAliasSelectsDeprecatedVolumePath(t *testing.T) {
+	exists := func(name string) bool { return name == legacyContainerDirectory }
+	if got := legacyInvocationWorkingDirectory("/bin/tenderduty", "/", nil, "", exists); got != legacyContainerDirectory {
+		t.Fatalf("legacy alias working directory = %q, want %q", got, legacyContainerDirectory)
+	}
+	if got := legacyInvocationWorkingDirectory("/usr/local/bin/nosnode-seer", canonicalContainerDirectory, nil, "", func(name string) bool {
+		return name == filepath.Join(legacyContainerDirectory, "config.yml")
+	}); got != legacyContainerDirectory {
+		t.Fatalf("canonical entrypoint did not discover existing legacy mount: got %q", got)
+	}
+	if got := legacyInvocationWorkingDirectory("/usr/local/bin/nosnode-seer", canonicalContainerDirectory, []string{"-f", "operator.yml"}, "", exists); got != "" {
+		t.Fatalf("explicit config selected legacy directory %q", got)
+	}
+	if got := legacyInvocationWorkingDirectory("/usr/local/bin/nosnode-seer", canonicalContainerDirectory, nil, "/run/seer.yml", exists); got != "" {
+		t.Fatalf("CONFIG-selected config selected legacy directory %q", got)
+	}
+	if got := legacyInvocationWorkingDirectory("/bin/tenderduty", "/", nil, "", func(string) bool { return false }); got != "" {
+		t.Fatalf("missing legacy volume selected working directory %q", got)
 	}
 }

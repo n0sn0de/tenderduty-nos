@@ -10,7 +10,7 @@ services:
     container_name: nosnode-seer
     restart: unless-stopped
     read_only: true
-    user: "65532:65532"
+    user: "26657:26657"
     cap_drop:
       - ALL
     security_opt:
