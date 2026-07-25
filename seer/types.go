@@ -17,7 +17,6 @@ import (
 	"time"
 
 	dash "github.com/n0sn0de/tenderduty-nos/seer/dashboard"
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 	"gopkg.in/yaml.v3"
 )
 
@@ -93,10 +92,12 @@ type ChainConfig struct {
 	connectionMux            sync.Mutex
 	name                     string
 	wsclient                 websocketConnection // custom websocket client to work around wss:// bugs in tendermint
-	client                   *rpchttp.HTTP       // legit tendermint client
-	noNodes                  bool                // tracks if all nodes are down
-	valInfo                  *ValInfo            // recent validator state, only refreshed every few minutes
-	lastValInfo              *ValInfo            // use for detecting newly-jailed/tombstone
+	client                   rpcClient
+	clientFactory            rpcClientFactory
+	addressCodec             validatorAddressCodec
+	noNodes                  bool     // tracks if all nodes are down
+	valInfo                  *ValInfo // recent validator state, only refreshed every few minutes
+	lastValInfo              *ValInfo // use for detecting newly-jailed/tombstone
 	blocksResults            []int
 	lastError                string
 	lastBlockTime            time.Time

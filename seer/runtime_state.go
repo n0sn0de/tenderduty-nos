@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 // nodeRuntimeState is copied while holding the chain's shared durable-state lock.
@@ -87,18 +85,18 @@ func cloneValInfo(info *ValInfo) *ValInfo {
 
 // monitoringSnapshot returns one coherent copy of the refreshable RPC and
 // validator state. Validator values are immutable after publication.
-func (cc *ChainConfig) monitoringSnapshot() (*rpchttp.HTTP, *ValInfo, *ValInfo) {
+func (cc *ChainConfig) monitoringSnapshot() (rpcClient, *ValInfo, *ValInfo) {
 	cc.monitoringMux.RLock()
 	defer cc.monitoringMux.RUnlock()
 	return cc.client, cloneValInfo(cc.valInfo), cloneValInfo(cc.lastValInfo)
 }
 
-func (cc *ChainConfig) rpcClientSnapshot() *rpchttp.HTTP {
+func (cc *ChainConfig) rpcClientSnapshot() rpcClient {
 	client, _, _ := cc.monitoringSnapshot()
 	return client
 }
 
-func (cc *ChainConfig) setRPCClient(client *rpchttp.HTTP) {
+func (cc *ChainConfig) setRPCClient(client rpcClient) {
 	cc.monitoringMux.Lock()
 	cc.client = client
 	cc.monitoringMux.Unlock()

@@ -1,0 +1,32 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "node_info": {
+      "protocol_version": {"p2p": "8", "block": "11", "app": "0"},
+      "id": "0123456789abcdef0123456789abcdef01234567",
+      "listen_addr": "tcp://127.0.0.1:26656",
+      "network": "fixture-1",
+      "version": "0.34.24",
+      "channels": "40202122233038606100",
+      "moniker": "fixture-node",
+      "other": {"tx_index": "on", "rpc_address": "tcp://127.0.0.1:26657"}
+    },
+    "sync_info": {
+      "latest_block_hash": "",
+      "latest_app_hash": "",
+      "latest_block_height": "42",
+      "latest_block_time": "2024-01-02T03:04:05Z",
+      "earliest_block_hash": "",
+      "earliest_app_hash": "",
+      "earliest_block_height": "1",
+      "earliest_block_time": "2024-01-01T00:00:00Z",
+      "catching_up": false
+    },
+    "validator_info": {
+      "address": "861009EC4D599FAB1F40ABC76E6F89880CFF5833",
+      "pub_key": {"type": "tendermint/PubKeyEd25519", "value": "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="},
+      "voting_power": "1"
+    }
+  }
+}

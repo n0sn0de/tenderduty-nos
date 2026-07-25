@@ -36,6 +36,32 @@ rm -f "$report"
 
 `govulncheck` is intentionally baseline-aware. The helper compares only symbol-reachable findings and fails on either a new or removed finding. The reviewed legacy set is documented in `security/govulncheck-allowlist.txt` and the roadmap.
 
+## Dependency-seam fixture and lifecycle gates
+
+The RPC seam has no live-network tests. Repeat its local status/ABCI fixtures,
+validator address lookup, block/vote conversion, wrong-network/error paths, and
+the cancellation/WebSocket/runtime synchronization probes with:
+
+```sh
+go test -count=20 ./seer -run 'Test(FirstPartyDependencySeamInjection|TendermintRPCStatusFixtures|NewRPCPreservesWrongNetworkAndErrorPaths|ValidatorLookupAndAddressNormalizationFixtures|ValidatorLookupMalformedAndMissingValues|BlockEventFixtureConversion|VoteEventFixtureConversion|NormalizeConsensusAddressCopiesBytesToUpperHex|ToBytesRetainsLegacyExportedCompatibility)$'
+go test -race -count=10 ./seer -run 'Test(WsRunCancellationSerializesOnePublishedWebSocketClose|ConcurrentRPCValidatorRefreshAndWebSocketWorkloadIsRaceFree|ShutdownDrainsAcceptedDeliveryBeforeSingleCheckpoint|CloseWebSocketsUnblocksRead|ShutdownDrainTimeoutSkipsCheckpointAndFails)$'
+go test -race -count=10 ./seer -run 'Test(ConcurrentPersistedMutationsAndSnapshotAreRaceFree|SnapshotSavedStateIsOneCoherentInstant)$'
+```
+
+The first-party seam is internal: `seer/rpc_contract.go` defines the interfaces
+and DTOs consumed by core monitoring. The exact remaining direct source imports
+are intentionally confined to `seer/tendermint_adapter.go`:
+
+- Tendermint `rpc/client/http` for the legacy HTTP RPC implementation;
+- Cosmos SDK Ed25519 and secp256k1 key types;
+- Cosmos SDK Bech32 plus staking and slashing protobuf types.
+
+`go.mod` and `go.sum` retain Cosmos SDK `v0.45.11` and Tendermint `v0.34.24`.
+No dependency, Go, container, workflow, or vulnerability-baseline bump belongs
+in this slice. Public endpoint discovery and the Gorilla WebSocket transport are
+existing non-Cosmos boundaries and remain direct until a later slice proves a
+second adapter is useful.
+
 Run the same core checks without host Go:
 
 ```sh

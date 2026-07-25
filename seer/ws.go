@@ -2,21 +2,17 @@ package seer
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/websocket"
-	dash "github.com/n0sn0de/tenderduty-nos/seer/dashboard"
-	pbtypes "github.com/tendermint/tendermint/proto/tendermint/types"
 	"log"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
+	"github.com/gorilla/websocket"
+	dash "github.com/n0sn0de/tenderduty-nos/seer/dashboard"
 )
 
 const (
@@ -91,7 +87,7 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 		workers.Wait()
 	}()
 
-	var client *rpchttp.HTTP
+	var client rpcClient
 	var startupValInfo *ValInfo
 	started := time.Now()
 	for {
@@ -242,7 +238,7 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 		}
 	}()
 
-	consensusAddress := strings.ToUpper(hex.EncodeToString(startupValInfo.Conspub))
+	consensusAddress := normalizeConsensusAddress(startupValInfo.Conspub)
 	voteChan := make(chan *WsReply)
 	workers.Add(1)
 	go func() {
@@ -323,44 +319,6 @@ func (c *Config) closeWebSockets() {
 	}
 }
 
-type stringInt64 string
-
-// helper to make the "everything is a string" issue less painful.
-func (si stringInt64) val() int64 {
-	i, _ := strconv.ParseInt(string(si), 10, 64)
-	return i
-}
-
-type signature struct {
-	ValidatorAddress string `json:"validator_address"`
-}
-
-// rawBlock is a trimmed down version of the block subscription result, it contains only what we need.
-type rawBlock struct {
-	Block struct {
-		Header struct {
-			Height          stringInt64 `json:"height"`
-			ProposerAddress string      `json:"proposer_address"`
-		} `json:"header"`
-		LastCommit struct {
-			Signatures []signature `json:"signatures"`
-		} `json:"last_commit"`
-	} `json:"block"`
-}
-
-// find determines if a validator's pre-commit was included in a finalized block.
-func (rb rawBlock) find(val string) bool {
-	if rb.Block.LastCommit.Signatures == nil {
-		return false
-	}
-	for _, v := range rb.Block.LastCommit.Signatures {
-		if v.ValidatorAddress == val {
-			return true
-		}
-	}
-	return false
-}
-
 // handleBlocks consumes the channel for new blocks and when it sees one sends a status update. It's also
 // responsible for stalled chain detection and will shutdown the client if there are no blocks for a minute.
 func handleBlocks(ctx context.Context, blocks chan *WsReply, results chan StatusUpdate, address string) error {
@@ -376,24 +334,14 @@ func handleBlocks(ctx context.Context, blocks chan *WsReply, results chan Status
 			}
 		case block := <-blocks:
 			lastBlock = time.Now()
-			b := &rawBlock{}
-			err := json.Unmarshal(block.Value(), b)
+			event, err := decodeBlockEvent(block.Value())
 			if err != nil {
 				l("could not decode block", err)
 				continue
 			}
-			upd := StatusUpdate{
-				Height: b.Block.Header.Height.val(),
-				Status: Statusmissed,
-				Final:  true,
-			}
-			if b.Block.Header.ProposerAddress == address {
-				upd.Status = StatusProposed
-			} else if b.find(address) {
-				upd.Status = StatusSigned
-			}
+			update := classifyBlockEvent(event, address)
 			select {
-			case results <- upd:
+			case results <- update:
 			case <-ctx.Done():
 				return nil
 			}
@@ -403,43 +351,24 @@ func handleBlocks(ctx context.Context, blocks chan *WsReply, results chan Status
 	}
 }
 
-// rawVote is a trimmed down version of the vote response.
-type rawVote struct {
-	Vote struct {
-		Type             pbtypes.SignedMsgType `json:"type"`
-		Height           stringInt64           `json:"height"`
-		ValidatorAddress string                `json:"validator_address"`
-	} `json:"Vote"`
-}
-
 // handleVotes consumes the channel for precommits and prevotes, tracking where in the process a validator is.
 func handleVotes(ctx context.Context, votes chan *WsReply, results chan StatusUpdate, address string) {
 	for {
 		select {
 		case reply := <-votes:
-			vote := &rawVote{}
-			err := json.Unmarshal(reply.Value(), vote)
+			event, err := decodeVoteEvent(reply.Value())
 			if err != nil {
 				l(err)
 				continue
 			}
-			if vote.Vote.ValidatorAddress == address {
-				upd := StatusUpdate{Height: vote.Vote.Height.val()}
-				switch vote.Vote.Type.String() {
-				case "":
-					continue
-				case "SIGNED_MSG_TYPE_PREVOTE":
-					upd.Status = StatusPrevote
-				case "SIGNED_MSG_TYPE_PRECOMMIT":
-					upd.Status = StatusPrecommit
-				case "SIGNED_MSG_TYPE_PROPOSAL":
-					upd.Status = StatusProposed
-				}
-				select {
-				case results <- upd:
-				case <-ctx.Done():
-					return
-				}
+			update, ok := classifyVoteEvent(event, address)
+			if !ok {
+				continue
+			}
+			select {
+			case results <- update:
+			case <-ctx.Done():
+				return
 			}
 
 		case <-ctx.Done():

@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/tendermint/tendermint/rpc/client/http"
 )
 
 type countingWebSocketConnection struct {
@@ -50,7 +48,7 @@ func (connection *countingWebSocketConnection) Close() error {
 }
 
 func TestWsRunCancellationSerializesOnePublishedWebSocketClose(t *testing.T) {
-	client, err := http.New("http://127.0.0.1:26657", "/websocket")
+	client, err := newTendermintRPCClient("http://127.0.0.1:26657", "/websocket")
 	if err != nil {
 		t.Fatal(err)
 	}

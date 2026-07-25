@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "query": "tm.event='NewBlock'",
+    "data": {
+      "type": "tendermint/event/NewBlock",
+      "value": {"block": {"header": {}, "last_commit": {}}}
+    }
+  }
+}
