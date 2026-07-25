@@ -1,0 +1,4 @@
+# Symbol-reachable findings inherited through the legacy Cosmos SDK 0.45 line.
+# The exact set is gated: new findings and removed findings both require review.
+GO-2024-3339
+GO-2026-5932
