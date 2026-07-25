@@ -48,7 +48,7 @@ func (connection *countingWebSocketConnection) Close() error {
 }
 
 func TestWsRunCancellationSerializesOnePublishedWebSocketClose(t *testing.T) {
-	client, err := newTendermintRPCClient("http://127.0.0.1:26657", "/websocket")
+	client, err := newCometBFTRPCClient("http://127.0.0.1:26657", "/websocket")
 	if err != nil {
 		t.Fatal(err)
 	}

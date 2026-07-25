@@ -8,7 +8,7 @@
 
 This repository is a modernized fork of the archived [`blockpane/tenderduty`](https://github.com/blockpane/tenderduty). The original MIT copyright and license remain intact; see [provenance](docs/provenance.md).
 
-> **Modernization status:** Phase 1 established the supported pinned Go toolchain, deterministic build gates, non-root scratch container, runtime rebrand, compatibility tests, and operator documentation. The first bounded Phase 2 slice now isolates the Tendermint/Cosmos RPC, validator, and block/vote wire types behind internal first-party interfaces and DTOs, without changing dependency or vulnerability baselines. The legacy Cosmos SDK line remains a reviewed modernization blocker; see [architecture](docs/architecture.md), [security](docs/security.md), and [roadmap](docs/roadmap.md).
+> **Modernization status:** Phase 1 established the supported pinned Go toolchain, deterministic build gates, non-root scratch container, runtime rebrand, compatibility tests, and operator documentation. Phase 2 now isolates the consensus dependency behind internal first-party interfaces and runs the adapter on the active Cosmos SDK `v0.53.7` / CometBFT `v0.38.23` compatibility family. The migration preserves existing operator/runtime contracts and removes one reviewed symbol-reachable vulnerability; the legacy OpenPGP baseline remains explicit. See [architecture](docs/architecture.md), [security](docs/security.md), and [roadmap](docs/roadmap.md).
 
 ## What it watches
 

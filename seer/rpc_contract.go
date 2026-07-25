@@ -53,7 +53,7 @@ type validatorAddressCodec interface {
 func (cc *ChainConfig) openRPCClient(endpoint, websocketPath string) (rpcClient, error) {
 	factory := cc.clientFactory
 	if factory == nil {
-		factory = tendermintRPCFactory{}
+		factory = cometBFTRPCFactory{}
 	}
 	return factory.New(endpoint, websocketPath)
 }

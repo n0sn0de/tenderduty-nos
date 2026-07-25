@@ -45,7 +45,7 @@ func TestConcurrentRPCValidatorRefreshAndWebSocketWorkloadIsRaceFree(t *testing.
 		}
 		switch queryPath {
 		case stakingValidatorQuery:
-			return fixtureResult("rpc-validator-ok.json")
+			return fixtureResult("rpc-validator-ed25519-ok.json")
 		case signingInfoQuery:
 			return fixtureResult("rpc-signing-info-ok.json")
 		case slashingParamsQuery:
