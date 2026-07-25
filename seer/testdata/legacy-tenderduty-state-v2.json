@@ -1,0 +1,29 @@
+{
+  "alarms": {
+    "sent_pd_alarms": {
+      "pager-duty incident": "2099-07-18T12:00:00Z"
+    },
+    "sent_tg_alarms": {
+      "telegram incident": "2099-07-18T12:01:00Z"
+    },
+    "sent_di_alarms": {
+      "discord incident": "2099-07-18T12:02:00Z"
+    },
+    "sent_slk_alarms": {
+      "slack incident": "2099-07-18T12:03:00Z"
+    },
+    "sent_all_alarms": {
+      "legacy-chain": {
+        "stalled: have not seen a new block on legacy-chain": "2099-07-18T12:04:00Z"
+      }
+    }
+  },
+  "blocks": {
+    "legacy-chain": [1, 0, 2, -1]
+  },
+  "nodes_down": {
+    "legacy-chain": {
+      "http://127.0.0.1:26657": "2099-07-18T12:05:00Z"
+    }
+  }
+}

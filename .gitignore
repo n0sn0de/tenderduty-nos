@@ -1,7 +1,9 @@
 config.yml
 config.yml.asc
 docker-compose.yml
+.nosnode-seer-state.json
 .tenderduty-state.json
+nosnode-seer
 tenderduty-*
 tenderduty
 local*
@@ -16,5 +18,3 @@ local*
 *.dylib
 *.test
 *.out
-
-
