@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	jsonrpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/cosmos/cosmos-sdk/types/bech32"
@@ -32,11 +35,35 @@ type cometBFTRPCClient struct {
 }
 
 func newCometBFTRPCClient(endpoint, websocketPath string) (*cometBFTRPCClient, error) {
-	client, err := rpchttp.New(endpoint, websocketPath)
+	httpClient, err := newCometBFTRPCHTTPClient(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	client, err := rpchttp.NewWithClient(endpoint, websocketPath, httpClient)
 	if err != nil {
 		return nil, err
 	}
 	return &cometBFTRPCClient{client: client}, nil
+}
+
+func newCometBFTRPCHTTPClient(endpoint string) (*http.Client, error) {
+	client, err := jsonrpcclient.DefaultHTTPClient(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	baseTransport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("unexpected CometBFT JSON-RPC transport %T", client.Transport)
+	}
+
+	// CometBFT 0.38 added ProxyFromEnvironment to its JSON-RPC transport.
+	// Tenderduty's Tendermint 0.34 client always dialed configured nodes directly,
+	// so retain that endpoint contract without mutating a shared transport.
+	directTransport := baseTransport.Clone()
+	directTransport.Proxy = nil
+	directClient := *client
+	directClient.Transport = directTransport
+	return &directClient, nil
 }
 
 func (client *cometBFTRPCClient) Status(ctx context.Context) (rpcStatus, error) {
