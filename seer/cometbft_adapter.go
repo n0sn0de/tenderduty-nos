@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	jsonrpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/cosmos/cosmos-sdk/types/bech32"
 	slashing "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	staking "github.com/cosmos/cosmos-sdk/x/staking/types"
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 const (
@@ -21,25 +24,49 @@ const (
 	slashingParamsQuery   = "/cosmos.slashing.v1beta1.Query/Params"
 )
 
-type tendermintRPCFactory struct{}
+type cometBFTRPCFactory struct{}
 
-func (tendermintRPCFactory) New(endpoint, websocketPath string) (rpcClient, error) {
-	return newTendermintRPCClient(endpoint, websocketPath)
+func (cometBFTRPCFactory) New(endpoint, websocketPath string) (rpcClient, error) {
+	return newCometBFTRPCClient(endpoint, websocketPath)
 }
 
-type tendermintRPCClient struct {
+type cometBFTRPCClient struct {
 	client *rpchttp.HTTP
 }
 
-func newTendermintRPCClient(endpoint, websocketPath string) (*tendermintRPCClient, error) {
-	client, err := rpchttp.New(endpoint, websocketPath)
+func newCometBFTRPCClient(endpoint, websocketPath string) (*cometBFTRPCClient, error) {
+	httpClient, err := newCometBFTRPCHTTPClient(endpoint)
 	if err != nil {
 		return nil, err
 	}
-	return &tendermintRPCClient{client: client}, nil
+	client, err := rpchttp.NewWithClient(endpoint, websocketPath, httpClient)
+	if err != nil {
+		return nil, err
+	}
+	return &cometBFTRPCClient{client: client}, nil
 }
 
-func (client *tendermintRPCClient) Status(ctx context.Context) (rpcStatus, error) {
+func newCometBFTRPCHTTPClient(endpoint string) (*http.Client, error) {
+	client, err := jsonrpcclient.DefaultHTTPClient(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	baseTransport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("unexpected CometBFT JSON-RPC transport %T", client.Transport)
+	}
+
+	// CometBFT 0.38 added ProxyFromEnvironment to its JSON-RPC transport.
+	// Tenderduty's Tendermint 0.34 client always dialed configured nodes directly,
+	// so retain that endpoint contract without mutating a shared transport.
+	directTransport := baseTransport.Clone()
+	directTransport.Proxy = nil
+	directClient := *client
+	directClient.Transport = directTransport
+	return &directClient, nil
+}
+
+func (client *cometBFTRPCClient) Status(ctx context.Context) (rpcStatus, error) {
 	status, err := client.client.Status(ctx)
 	if err != nil {
 		return rpcStatus{}, err
@@ -53,7 +80,7 @@ func (client *tendermintRPCClient) Status(ctx context.Context) (rpcStatus, error
 	}, nil
 }
 
-func (client *tendermintRPCClient) Validator(ctx context.Context, address string) (validatorRecord, error) {
+func (client *cometBFTRPCClient) Validator(ctx context.Context, address string) (validatorRecord, error) {
 	if strings.Contains(address, "valcons") {
 		_, decoded, err := bech32.DecodeAndConvert(address)
 		if err != nil {
@@ -114,7 +141,7 @@ func (client *tendermintRPCClient) Validator(ctx context.Context, address string
 	}, nil
 }
 
-func (client *tendermintRPCClient) SigningInfo(ctx context.Context, address string) (signingInfo, error) {
+func (client *cometBFTRPCClient) SigningInfo(ctx context.Context, address string) (signingInfo, error) {
 	request := slashing.QuerySigningInfoRequest{ConsAddress: address}
 	payload, err := request.Marshal()
 	if err != nil {
@@ -137,7 +164,7 @@ func (client *tendermintRPCClient) SigningInfo(ctx context.Context, address stri
 	}, nil
 }
 
-func (client *tendermintRPCClient) SlashingParams(ctx context.Context) (slashingParams, error) {
+func (client *cometBFTRPCClient) SlashingParams(ctx context.Context) (slashingParams, error) {
 	request := &slashing.QueryParamsRequest{}
 	payload, err := request.Marshal()
 	if err != nil {
@@ -157,11 +184,11 @@ func (client *tendermintRPCClient) SlashingParams(ctx context.Context) (slashing
 	return slashingParams{SignedBlocksWindow: queryResult.Params.SignedBlocksWindow}, nil
 }
 
-func (client *tendermintRPCClient) Remote() string {
+func (client *cometBFTRPCClient) Remote() string {
 	return client.client.Remote()
 }
 
-func (client *tendermintRPCClient) Quit() <-chan struct{} {
+func (client *cometBFTRPCClient) Quit() <-chan struct{} {
 	return client.client.Quit()
 }
 
@@ -178,7 +205,7 @@ func (value stringInt64) val() int64 {
 	return parsed
 }
 
-type tendermintBlockWire struct {
+type cometBFTBlockWire struct {
 	Block struct {
 		Header struct {
 			Height          stringInt64 `json:"height"`
@@ -193,7 +220,7 @@ type tendermintBlockWire struct {
 }
 
 func decodeBlockEvent(payload []byte) (blockEvent, error) {
-	wire := tendermintBlockWire{}
+	wire := cometBFTBlockWire{}
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		return blockEvent{}, err
 	}
@@ -208,7 +235,7 @@ func decodeBlockEvent(payload []byte) (blockEvent, error) {
 	return event, nil
 }
 
-type tendermintVoteWire struct {
+type cometBFTVoteWire struct {
 	Vote struct {
 		Type             voteType    `json:"type"`
 		Height           stringInt64 `json:"height"`
@@ -217,7 +244,7 @@ type tendermintVoteWire struct {
 }
 
 func decodeVoteEvent(payload []byte) (voteEvent, error) {
-	wire := tendermintVoteWire{}
+	wire := cometBFTVoteWire{}
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		return voteEvent{}, err
 	}

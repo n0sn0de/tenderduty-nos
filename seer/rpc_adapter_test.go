@@ -4,18 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
-	fixtureConsensusHex = "861009EC4D599FAB1F40ABC76E6F89880CFF5833"
-	fixtureValoper      = "cosmosvaloper1zy3rx3z4vemc3xgq42aueh0wluqpzg3nyrhpag"
-	fixtureValcons      = "cosmosvalcons1scgqnmzdtx06k86q40rkumuf3qx07kpn2ul24p"
+	fixtureConsensusHex     = "861009EC4D599FAB1F40ABC76E6F89880CFF5833"
+	fixtureSecpConsensusHex = "751E76E8199196D454941C45D1B3A323F1433BD6"
+	fixtureValoper          = "cosmosvaloper1zy3rx3z4vemc3xgq42aueh0wluqpzg3nyrhpag"
+	fixtureValcons          = "cosmosvalcons1scgqnmzdtx06k86q40rkumuf3qx07kpn2ul24p"
 )
 
 func loadFixture(t *testing.T, name string) []byte {
@@ -93,7 +96,7 @@ func newFixtureClient(t *testing.T, fixtures map[string]string) rpcClient {
 	t.Helper()
 	server := rpcFixtureServer(t, fixtures)
 	t.Cleanup(server.Close)
-	client, err := newTendermintRPCClient(server.URL, "/websocket")
+	client, err := newCometBFTRPCClient(server.URL, "/websocket")
 	if err != nil {
 		t.Fatalf("create RPC adapter: %v", err)
 	}
@@ -131,6 +134,31 @@ func (factory *recordingRPCFactory) New(endpoint, path string) (rpcClient, error
 	return factory.client, nil
 }
 
+type scriptedStatusRPCClient struct {
+	stubRPCClient
+	statusErr error
+	contexts  *[]context.Context
+}
+
+func (client *scriptedStatusRPCClient) Status(ctx context.Context) (rpcStatus, error) {
+	*client.contexts = append(*client.contexts, ctx)
+	return client.status, client.statusErr
+}
+
+type scriptedRPCFactory struct {
+	order   []string
+	clients map[string]*scriptedStatusRPCClient
+}
+
+func (factory *scriptedRPCFactory) New(endpoint, _ string) (rpcClient, error) {
+	factory.order = append(factory.order, endpoint)
+	client, ok := factory.clients[endpoint]
+	if !ok {
+		return nil, errors.New("unexpected endpoint " + endpoint)
+	}
+	return client, nil
+}
+
 type recordingAddressCodec struct {
 	prefix string
 	bytes  []byte
@@ -166,7 +194,94 @@ func TestFirstPartyDependencySeamInjection(t *testing.T) {
 	}
 }
 
-func TestTendermintRPCStatusFixtures(t *testing.T) {
+func TestNewRPCPreservesOrderedFallbackAndSharedDeadline(t *testing.T) {
+	const (
+		transport = "fixture://transport"
+		wrong     = "fixture://wrong-network"
+		syncing   = "fixture://catching-up"
+		healthy   = "fixture://healthy"
+	)
+	var contexts []context.Context
+	factory := &scriptedRPCFactory{clients: map[string]*scriptedStatusRPCClient{
+		transport: {stubRPCClient: stubRPCClient{remote: transport}, statusErr: errors.New("transport failure"), contexts: &contexts},
+		wrong:     {stubRPCClient: stubRPCClient{status: rpcStatus{Network: "other-1"}, remote: wrong}, contexts: &contexts},
+		syncing:   {stubRPCClient: stubRPCClient{status: rpcStatus{Network: "fixture-1", CatchingUp: true}, remote: syncing}, contexts: &contexts},
+		healthy:   {stubRPCClient: stubRPCClient{status: rpcStatus{Network: "fixture-1"}, remote: healthy}, contexts: &contexts},
+	}}
+	nodes := []*NodeConfig{{Url: transport}, {Url: wrong}, {Url: syncing}, {Url: healthy}}
+	chain := &ChainConfig{name: "ordered-fallback", ChainId: "fixture-1", Nodes: nodes, clientFactory: factory}
+
+	if err := chain.newRpc(context.Background()); err != nil {
+		t.Fatalf("select healthy endpoint: %v", err)
+	}
+	if got, want := strings.Join(factory.order, ","), strings.Join([]string{transport, wrong, syncing, healthy}, ","); got != want {
+		t.Fatalf("first endpoint order = %q, want %q", got, want)
+	}
+	if len(contexts) != 4 {
+		t.Fatalf("status contexts = %d, want 4", len(contexts))
+	}
+	deadline, ok := contexts[0].Deadline()
+	if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 10*time.Second {
+		t.Fatalf("selection deadline = %v, ok = %t", deadline, ok)
+	}
+	for index, ctx := range contexts[1:] {
+		if ctx != contexts[0] {
+			t.Fatalf("status context %d did not share the selection budget", index+1)
+		}
+	}
+	for index, node := range nodes[:3] {
+		state := chain.nodeState(node)
+		if !state.down {
+			t.Fatalf("failed node %d was not marked down: %+v", index, state)
+		}
+	}
+	if state := chain.nodeState(nodes[2]); !state.syncing {
+		t.Fatalf("catching-up node state = %+v", state)
+	}
+	selected := chain.rpcClientSnapshot()
+	if selected == nil || selected.Remote() != healthy {
+		t.Fatalf("selected client = %v", selected)
+	}
+
+	factory.order = nil
+	contexts = nil
+	if err := chain.newRpc(context.Background()); err != nil {
+		t.Fatalf("reselect known-healthy endpoint: %v", err)
+	}
+	if got := strings.Join(factory.order, ","); got != healthy {
+		t.Fatalf("second endpoint order = %q, want only %q", got, healthy)
+	}
+	if len(contexts) != 1 {
+		t.Fatalf("second status calls = %d, want 1", len(contexts))
+	}
+}
+
+func TestNewRPCPropagatesParentCancellation(t *testing.T) {
+	const endpoint = "fixture://cancelled"
+	var contexts []context.Context
+	factory := &scriptedRPCFactory{clients: map[string]*scriptedStatusRPCClient{
+		endpoint: {stubRPCClient: stubRPCClient{remote: endpoint}, statusErr: context.Canceled, contexts: &contexts},
+	}}
+	chain := &ChainConfig{
+		name:          "cancelled",
+		ChainId:       "fixture-1",
+		Nodes:         []*NodeConfig{{Url: endpoint}},
+		clientFactory: factory,
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := chain.newRpc(parent); err == nil {
+		t.Fatal("cancelled selection succeeded")
+	}
+	if len(contexts) != 1 {
+		t.Fatalf("received contexts = %d, want 1", len(contexts))
+	}
+	if !errors.Is(contexts[0].Err(), context.Canceled) {
+		t.Fatalf("received context error = %v, want cancellation", contexts[0].Err())
+	}
+}
+
+func TestCometBFTRPCStatusFixtures(t *testing.T) {
 	t.Run("complete", func(t *testing.T) {
 		client := newFixtureClient(t, map[string]string{"status": "rpc-status-ok.json"})
 		status, err := client.Status(context.Background())
@@ -212,7 +327,7 @@ func TestTendermintRPCStatusFixtures(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"jsonrpc":`))
 		}))
 		defer server.Close()
-		client, err := newTendermintRPCClient(server.URL, "/websocket")
+		client, err := newCometBFTRPCClient(server.URL, "/websocket")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -256,7 +371,7 @@ func TestNewRPCPreservesWrongNetworkAndErrorPaths(t *testing.T) {
 
 func TestValidatorLookupAndAddressNormalizationFixtures(t *testing.T) {
 	fixtures := map[string]string{
-		"abci_query:/cosmos.staking.v1beta1.Query/Validator":    "rpc-validator-ok.json",
+		"abci_query:/cosmos.staking.v1beta1.Query/Validator":    "rpc-validator-ed25519-ok.json",
 		"abci_query:/cosmos.slashing.v1beta1.Query/SigningInfo": "rpc-signing-info-ok.json",
 		"abci_query:/cosmos.slashing.v1beta1.Query/Params":      "rpc-slashing-params-ok.json",
 	}
@@ -266,7 +381,7 @@ func TestValidatorLookupAndAddressNormalizationFixtures(t *testing.T) {
 		"abci_query:/cosmos.slashing.v1beta1.Query/Params":      "",
 	})
 	defer server.Close()
-	client, err := newTendermintRPCClient(server.URL, "/websocket")
+	client, err := newCometBFTRPCClient(server.URL, "/websocket")
 	if err != nil {
 		t.Fatalf("create RPC adapter: %v", err)
 	}
@@ -304,6 +419,34 @@ func TestValidatorLookupAndAddressNormalizationFixtures(t *testing.T) {
 	}
 	if info.Valcons != fixtureValcons || info.Missed != 7 || info.Window != 100 {
 		t.Fatalf("validator info = %+v", info)
+	}
+}
+
+func TestValidatorKeyAlgorithmFixtures(t *testing.T) {
+	tests := []struct {
+		name             string
+		fixture          string
+		consensusAddress string
+	}{
+		{name: "Ed25519", fixture: "rpc-validator-ed25519-ok.json", consensusAddress: fixtureConsensusHex},
+		{name: "secp256k1", fixture: "rpc-validator-secp256k1-ok.json", consensusAddress: fixtureSecpConsensusHex},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := newFixtureClient(t, map[string]string{
+				"abci_query:/cosmos.staking.v1beta1.Query/Validator": test.fixture,
+			})
+			validator, err := client.Validator(context.Background(), fixtureValoper)
+			if err != nil {
+				t.Fatalf("validator lookup: %v", err)
+			}
+			if validator.Moniker != "fixture-validator" || !validator.Jailed || !validator.Bonded {
+				t.Fatalf("validator = %+v", validator)
+			}
+			if got := normalizeConsensusAddress(validator.ConsensusAddress); got != test.consensusAddress {
+				t.Fatalf("normalized consensus address = %q, want %q", got, test.consensusAddress)
+			}
+		})
 	}
 }
 

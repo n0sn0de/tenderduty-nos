@@ -25,14 +25,42 @@ jobs:
       - name: Check out source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Trust and verify checked-out worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(git rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
+          git ls-files --error-unmatch go.mod
+
       - name: Toolchain and module integrity
         run: |
           go version
           go mod verify
           go mod tidy -diff
 
+      - name: Formatting gate self-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe=$(mktemp -d)
+          trap 'rm -rf "$probe"' EXIT
+          git -C "$probe" init --quiet
+          printf 'package probe\n\nfunc deliberatelyUnformatted( ){ }\n' >"$probe/probe.go"
+          git -C "$probe" add probe.go
+          set +e
+          output=$(cd "$probe" && bash "$GITHUB_WORKSPACE/scripts/check-gofmt.sh" 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -eq 1
+          grep -Fq 'gofmt: checking 1 tracked Go file(s)' <<<"$output"
+          grep -Fq 'probe.go' <<<"$output"
+          echo "gofmt self-test: deliberately unformatted tracked probe rejected"
+
       - name: Formatting
-        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+        shell: bash
+        run: bash scripts/check-gofmt.sh
 
       - name: Unit tests
         run: go test -count=1 ./...

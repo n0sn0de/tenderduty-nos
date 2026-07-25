@@ -1,4 +1,3 @@
-# Symbol-reachable findings inherited through the legacy Cosmos SDK 0.45 line.
+# Symbol-reachable findings retained after the Cosmos SDK 0.53 / CometBFT 0.38 migration.
 # The exact set is gated: new findings and removed findings both require review.
-GO-2024-3339
 GO-2026-5932

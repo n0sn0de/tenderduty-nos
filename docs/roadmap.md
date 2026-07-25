@@ -13,22 +13,41 @@ This roadmap is sequencing, not a release promise.
 - preserve YAML, flag, endpoint, state schema, notification semantics, and metrics compatibility;
 - remove unused UIkit/Lodash/logo/screenshots and consolidate operator setup.
 
-## Phase 2 — dependency seam (in progress)
+## Phase 2 — dependency seam and active compatibility line (in progress)
 
 Completed in the first bounded slice:
 
 - core endpoint selection, health checking, validator refresh, and WebSocket monitoring now consume first-party RPC interfaces and DTOs rather than Tendermint/Cosmos response types;
-- the legacy Tendermint/Cosmos implementation is concentrated in `seer/tendermint_adapter.go`, including status translation, staking/slashing protobuf queries, Bech32 conversion, validator-key handling, and block/vote wire-event conversion;
+- the dependency implementation was concentrated in one adapter (now `seer/cometbft_adapter.go`), including status translation, staking/slashing protobuf queries, Bech32 conversion, validator-key handling, and block/vote wire-event conversion;
 - deterministic local fixtures cover complete, malformed, missing-field, non-validator, wrong-network, and RPC-error paths while retaining the existing lifecycle and alerting tests.
+
+Completed in the second bounded slice:
+
+- migrated only the adapter/import/module/test/doc surfaces to Cosmos SDK
+  `v0.53.7` and CometBFT `v0.38.23`, the active `2025.1` release-family line;
+- retained the first-party DTO seam, ordered endpoint selection, shared
+  deadlines, validator address behavior, block/vote classification, and
+  WebSocket cancellation/close contracts;
+- added real protobuf-over-ABCI fixtures for deterministic Ed25519 and
+  compressed secp256k1 validator consensus keys;
+- selected Sonic `v1.15.1` because the SDK's transitive `v1.14.2` does not
+  compile under the existing pinned Go `1.26.5` toolchain;
+- removed the symbol-reachable transaction-decoding finding `GO-2024-3339`
+  from the exact govulncheck baseline.
 
 Still deferred:
 
-- evaluate a compatible CometBFT/Cosmos SDK line through the seam rather than by bulk upgrade;
-- eliminate the reviewed govulncheck baseline as fixes become behaviorally verified;
+- eliminate the remaining reviewed govulncheck baseline only with an explicit
+  remote-config/OpenPGP migration;
 - replace legacy remote-config crypto only with an explicit migration format/version;
 - decide whether public endpoint discovery and WebSocket transport construction need separate injectable adapters after a candidate dependency line is tested.
 
-This slice deliberately does **not** change Cosmos SDK, Tendermint, Go, container, workflow, or vulnerability baselines. The exact blocker remains the current Cosmos SDK `v0.45.11` / Tendermint `v0.34.24` compatibility line and its transitive OpenPGP initialization path. A major dependency jump changes RPC and validator behavior and requires a later, separately reviewed compatibility evaluation.
+This slice deliberately does **not** change Go, container, workflow, release,
+remote-config format, runtime-hardening, or visual scope. `GO-2026-5932`
+remains symbol-reachable through the legacy OpenPGP path and SDK package
+initialization. That residual has no fixed version and is not hidden by the
+consensus migration; removing it requires a separately versioned remote-config
+format rather than an opportunistic crypto swap.
 
 ## Phase 3 — runtime hardening
 

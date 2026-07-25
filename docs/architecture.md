@@ -13,8 +13,9 @@ operator YAML + optional chains.d
      +-------+--------+
      |                |
      v                v
-Tendermint RPC   public fallback (optional)
-HTTP/WebSocket       HTTP discovery
+CometBFT/Tendermint   public fallback (optional)
+compatible RPC        HTTP discovery
+HTTP/WebSocket
      |
      v
 chain/validator state --> alert fan-out --> configured third-party integrations
@@ -35,20 +36,20 @@ Client replacement and validator publication remain separate locked operations,
 matching the existing endpoint-selection and refresh sequence rather than adding
 an atomic cross-operation guarantee.
 
-`seer/tendermint_adapter.go` is the only Go source file that directly imports the
-Cosmos SDK or Tendermint. It owns the current `rpchttp.HTTP` client, Cosmos
+`seer/cometbft_adapter.go` is the only Go source file that directly imports the
+Cosmos SDK or CometBFT. It owns the current `rpchttp.HTTP` client, Cosmos
 staking/slashing protobuf requests and responses, Ed25519/secp256k1 consensus-key
-handling, Bech32 conversion, and Tendermint block/vote wire decoding. Core RPC
+handling, Bech32 conversion, and CometBFT/Tendermint-compatible block/vote wire decoding. Core RPC
 selection sees only network/catch-up status; validator refresh sees only the
 fields used by alarms, metrics, and the dashboard; block/vote handlers see only
 normalized event DTOs.
 
 The seam is internal and does not add a supported public Go API. The current
-adapter still targets Cosmos SDK `v0.45.11` and Tendermint `v0.34.24`. A future
-CometBFT/Cosmos evaluation must implement the same narrow semantics and pass the
-local fixtures before replacing that adapter. Public endpoint discovery and the
-Gorilla WebSocket transport remain separate existing boundaries; they were not
-redesigned in this slice.
+adapter targets Cosmos SDK `v0.53.7` and CometBFT `v0.38.23`, an active `2025.1`
+Cosmos Stack release-family pair. Static loopback RPC fixtures exercise both
+Ed25519 and compressed secp256k1 consensus keys through the real protobuf and
+adapter path. Public endpoint discovery and the Gorilla WebSocket transport
+remain separate existing boundaries; they were not redesigned in this slice.
 
 ## Inbound listeners
 

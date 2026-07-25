@@ -35,8 +35,17 @@ nosnode-seer -decrypt -encrypted-config config.yml.asc -f config.yml
 
 ## Dependency security baseline
 
-CI runs pinned `gosec`, `staticcheck`, and `govulncheck`. Safe targeted updates removed reachable YAML and `x/net` findings found during foundation work. Two symbol-reachable findings remain inherited through the Cosmos SDK 0.45 dependency line and are listed by ID in `security/govulncheck-allowlist.txt`. The gate requires an exact match: any new finding or resolved finding fails until reviewed.
+CI runs pinned `gosec`, `staticcheck`, and `govulncheck`. The Cosmos SDK
+`v0.53.7` / CometBFT `v0.38.23` migration removed the symbol-reachable
+transaction-decoding finding `GO-2024-3339`; the exact reviewed baseline now
+contains only `GO-2026-5932`. That finding reports the unmaintained
+`golang.org/x/crypto/openpgp` design and remains reachable through both the
+legacy remote-config path and Cosmos SDK package initialization. It has no fixed
+version. The gate requires an exact match: any new finding or resolved finding
+fails until reviewed.
 
-A safe fix requires upgrading the Tendermint/Cosmos compatibility line and revalidating RPC/validator behavior; it is intentionally not disguised as complete in this bounded PR. The allowlist is a review mechanism, not a declaration that the findings are harmless.
+The remaining finding is not declared harmless. Removing it requires an
+explicit remote-config format and crypto migration so existing encrypted config
+is not silently broken; that work is outside this consensus dependency slice.
 
 Report sensitive findings privately to repository maintainers. Do not include live endpoints, credentials, validator topology, or step-by-step exploitation details in public issues.
