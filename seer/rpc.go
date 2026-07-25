@@ -77,7 +77,7 @@ func (cc *ChainConfig) newRpc(parent context.Context) error {
 			markDown(endpoint, message, syncing)
 			continue
 		}
-		cc.client = client
+		cc.setRPCClient(client)
 		cc.setNoNodes(false)
 		return nil
 	}
@@ -86,7 +86,7 @@ func (cc *ChainConfig) newRpc(parent context.Context) error {
 			node := guessPublicEndpointContext(ctx, registryURL)
 			l(cc.ChainId, "⛑ attemtping to use public fallback node", node)
 			if client, _, failed, _ := tryURL(node); !failed {
-				cc.client = client
+				cc.setRPCClient(client)
 				cc.setNoNodes(false)
 				l(cc.ChainId, "⛑ connected to public endpoint", node)
 				return nil
@@ -99,16 +99,20 @@ func (cc *ChainConfig) newRpc(parent context.Context) error {
 	cc.activeAlerts = td.alarmState().getCount(cc.name)
 	cc.lastError = "no usable RPC endpoints available for " + cc.ChainId
 	if td.EnableDash {
+		valInfo, _ := cc.validatorInfoSnapshot()
+		if valInfo == nil {
+			valInfo = &ValInfo{}
+		}
 		td.updateChan <- &dash.ChainStatus{
 			MsgType:      "status",
 			Name:         cc.name,
 			ChainId:      cc.ChainId,
-			Moniker:      cc.valInfo.Moniker,
-			Bonded:       cc.valInfo.Bonded,
-			Jailed:       cc.valInfo.Jailed,
-			Tombstoned:   cc.valInfo.Tombstoned,
-			Missed:       cc.valInfo.Missed,
-			Window:       cc.valInfo.Window,
+			Moniker:      valInfo.Moniker,
+			Bonded:       valInfo.Bonded,
+			Jailed:       valInfo.Jailed,
+			Tombstoned:   valInfo.Tombstoned,
+			Missed:       valInfo.Missed,
+			Window:       valInfo.Window,
 			Nodes:        len(cc.Nodes),
 			HealthyNodes: 0,
 			ActiveAlerts: cc.activeAlerts,
@@ -195,21 +199,9 @@ func (cc *ChainConfig) monitorHealth(ctx context.Context, chainName string) {
 			if ctx.Err() != nil {
 				return
 			}
-			if cc.client == nil {
+			if cc.rpcClientSnapshot() == nil {
 				if err := cc.newRpc(ctx); err != nil {
 					l("💥", cc.ChainId, err)
-				}
-			}
-			if cc.valInfo != nil {
-				cc.lastValInfo = &ValInfo{
-					Moniker:    cc.valInfo.Moniker,
-					Bonded:     cc.valInfo.Bonded,
-					Jailed:     cc.valInfo.Jailed,
-					Tombstoned: cc.valInfo.Tombstoned,
-					Missed:     cc.valInfo.Missed,
-					Window:     cc.valInfo.Window,
-					Conspub:    cc.valInfo.Conspub,
-					Valcons:    cc.valInfo.Valcons,
 				}
 			}
 			if err := cc.GetValInfo(ctx, false); err != nil {

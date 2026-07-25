@@ -24,6 +24,17 @@ const (
 	QueryVote     string = `tm.event='Vote'`
 )
 
+type websocketConnection interface {
+	Close() error
+	SetCompressionLevel(int) error
+	ReadMessage() (int, []byte, error)
+	WriteMessage(int, []byte) error
+}
+
+var newWebSocketConnection = func(ctx context.Context, endpoint string, allowInsecure bool) (websocketConnection, error) {
+	return NewClientContext(ctx, endpoint, allowInsecure)
+}
+
 // StatusType represents the various possible end states. Prevote and Precommit are special cases, where the node
 // monitoring for misses did see them, but the proposer did not include in the block.
 type StatusType int
@@ -81,10 +92,11 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 	}()
 
 	var client *rpchttp.HTTP
+	var startupValInfo *ValInfo
 	started := time.Now()
 	for {
-		client = cc.client
-		if client != nil && cc.valInfo != nil && cc.valInfo.Conspub != nil {
+		client, startupValInfo, _ = cc.monitoringSnapshot()
+		if client != nil && startupValInfo != nil && startupValInfo.Conspub != nil {
 			break
 		}
 		if started.Before(time.Now().Add(-2 * time.Minute)) {
@@ -97,7 +109,7 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 		}
 	}
 
-	connection, err := NewClientContext(ctx, client.Remote(), true)
+	connection, err := newWebSocketConnection(ctx, client.Remote(), true)
 	if err != nil {
 		l(err)
 		return
@@ -112,7 +124,7 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 	go func() {
 		defer workers.Done()
 		<-ctx.Done()
-		_ = connection.Close()
+		cc.closeWebSocket()
 	}()
 
 	resultChan := make(chan StatusUpdate)
@@ -123,10 +135,14 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 		for {
 			select {
 			case update := <-resultChan:
+				valInfo, _ := cc.validatorInfoSnapshot()
+				if valInfo == nil {
+					continue
+				}
 				if update.Final && update.Height%20 == 0 {
 					l(fmt.Sprintf("🧊 %-12s block %d", cc.ChainId, update.Height))
 				}
-				if update.Status > signState && cc.valInfo.Bonded {
+				if update.Status > signState && valInfo.Bonded {
 					signState = update.Status
 				}
 				if !update.Final {
@@ -142,8 +158,8 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 				}
 				info := getAlarms(cc.name)
 				blocks := cc.recordBlockResult(int(signState))
-				if signState < StatusSigned && cc.valInfo.Bonded {
-					warn := fmt.Sprintf("❌ warning      %s missed block %d on %s", cc.valInfo.Moniker, update.Height, cc.ChainId)
+				if signState < StatusSigned && valInfo.Bonded {
+					warn := fmt.Sprintf("❌ warning      %s missed block %d on %s", valInfo.Moniker, update.Height, cc.ChainId)
 					info += warn + "\n"
 					cc.lastError = time.Now().UTC().String() + " " + info
 					l(warn)
@@ -179,9 +195,9 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 					}
 				}
 				switch {
-				case cc.valInfo.Tombstoned:
+				case valInfo.Tombstoned:
 					info += "- validator is tombstoned\n"
-				case cc.valInfo.Jailed:
+				case valInfo.Jailed:
 					info += "- validator is jailed\n"
 				}
 				cc.activeAlerts = td.alarmState().getCount(cc.name)
@@ -190,12 +206,12 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 						MsgType:      "status",
 						Name:         cc.name,
 						ChainId:      cc.ChainId,
-						Moniker:      cc.valInfo.Moniker,
-						Bonded:       cc.valInfo.Bonded,
-						Jailed:       cc.valInfo.Jailed,
-						Tombstoned:   cc.valInfo.Tombstoned,
-						Missed:       cc.valInfo.Missed,
-						Window:       cc.valInfo.Window,
+						Moniker:      valInfo.Moniker,
+						Bonded:       valInfo.Bonded,
+						Jailed:       valInfo.Jailed,
+						Tombstoned:   valInfo.Tombstoned,
+						Missed:       valInfo.Missed,
+						Window:       valInfo.Window,
 						Nodes:        len(cc.Nodes),
 						HealthyNodes: healthyNodes,
 						ActiveAlerts: cc.activeAlerts,
@@ -226,7 +242,7 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 		}
 	}()
 
-	consensusAddress := strings.ToUpper(hex.EncodeToString(append([]byte(nil), cc.valInfo.Conspub...)))
+	consensusAddress := strings.ToUpper(hex.EncodeToString(startupValInfo.Conspub))
 	voteChan := make(chan *WsReply)
 	workers.Add(1)
 	go func() {

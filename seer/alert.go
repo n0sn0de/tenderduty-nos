@@ -656,12 +656,17 @@ func (cc *ChainConfig) checkStalledAlert(now time.Time) {
 	if resolved {
 		severity = "info"
 	}
+	valInfo, _ := cc.validatorInfoSnapshot()
+	valcons := ""
+	if valInfo != nil {
+		valcons = valInfo.Valcons
+	}
 	td.alert(
 		cc.name,
 		fmt.Sprintf("stalled: have not seen a new block on %s in %d minutes", cc.ChainId, cc.Alerts.Stalled),
 		severity,
 		resolved,
-		&cc.valInfo.Valcons,
+		&valcons,
 	)
 	if resolved {
 		alarms.clearNoBlocks(cc.name)
@@ -688,12 +693,13 @@ func (cc *ChainConfig) lastFinalBlockTime() time.Time {
 }
 
 func (cc *ChainConfig) checkPercentageAlert() {
+	valInfo, _ := cc.validatorInfoSnapshot()
 	cc.alertStateMux.Lock()
-	if !cc.Alerts.PercentageAlerts || cc.valInfo == nil || cc.valInfo.Window == 0 {
+	if !cc.Alerts.PercentageAlerts || valInfo == nil || valInfo.Window == 0 {
 		cc.alertStateMux.Unlock()
 		return
 	}
-	percentMissed := 100 * float64(cc.valInfo.Missed) / float64(cc.valInfo.Window)
+	percentMissed := 100 * float64(valInfo.Missed) / float64(valInfo.Window)
 	resolved := false
 	switch {
 	case !cc.percentageAlarm && percentMissed > float64(cc.Alerts.Window):
@@ -705,8 +711,8 @@ func (cc *ChainConfig) checkPercentageAlert() {
 		cc.alertStateMux.Unlock()
 		return
 	}
-	moniker := cc.valInfo.Moniker
-	valcons := cc.valInfo.Valcons
+	moniker := valInfo.Moniker
+	valcons := valInfo.Valcons
 	cc.alertStateMux.Unlock()
 
 	severity := cc.Alerts.PercentagePriority
@@ -735,7 +741,12 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 	// wait until we have a moniker:
 	noNodesSec := 0 // delay a no-nodes alarm for 30 seconds, too noisy.
 	for {
-		if cc.valInfo == nil || cc.valInfo.Moniker == "not connected" {
+		valInfo, _ := cc.validatorInfoSnapshot()
+		valcons := ""
+		if valInfo != nil {
+			valcons = valInfo.Valcons
+		}
+		if valInfo == nil || valInfo.Moniker == "not connected" {
 			if !waitForContext(ctx, time.Second) {
 				return
 			}
@@ -746,7 +757,7 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 					fmt.Sprintf("no RPC endpoints are working for %s", cc.ChainId),
 					"critical",
 					false,
-					&cc.valInfo.Valcons,
+					&valcons,
 				)
 			}
 			noNodesSec += 1
@@ -768,6 +779,10 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 		if !waitForContext(ctx, 2*time.Second) {
 			return
 		}
+		valInfo, lastValInfo := cc.validatorInfoSnapshot()
+		if valInfo == nil {
+			continue
+		}
 
 		// alert if we can't monitor
 		switch {
@@ -786,7 +801,7 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 					fmt.Sprintf("no RPC endpoints are working for %s", cc.ChainId),
 					"critical",
 					false,
-					&cc.valInfo.Valcons,
+					&valInfo.Valcons,
 				)
 			}
 		case cc.Alerts.AlertIfNoServers && noNodes && !cc.noNodesState():
@@ -796,7 +811,7 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 				fmt.Sprintf("no RPC endpoints are working for %s", cc.ChainId),
 				"critical",
 				true,
-				&cc.valInfo.Valcons,
+				&valInfo.Valcons,
 			)
 		default:
 			noNodesSec = 0
@@ -806,27 +821,27 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 		cc.checkStalledAlert(time.Now())
 
 		// jailed detection - only alert if it changes.
-		if cc.Alerts.AlertIfInactive && cc.lastValInfo != nil && cc.lastValInfo.Bonded != cc.valInfo.Bonded &&
-			cc.lastValInfo.Moniker == cc.valInfo.Moniker {
+		if cc.Alerts.AlertIfInactive && lastValInfo != nil && lastValInfo.Bonded != valInfo.Bonded &&
+			lastValInfo.Moniker == valInfo.Moniker {
 
-			id := cc.valInfo.Valcons + "jailed"
+			id := valInfo.Valcons + "jailed"
 			// just went inactive, figure out if it's jail or tombstone
-			if !cc.valInfo.Bonded && cc.lastValInfo.Bonded {
-				if cc.valInfo.Tombstoned {
+			if !valInfo.Bonded && lastValInfo.Bonded {
+				if valInfo.Tombstoned {
 					// don't worry about changing it back ... lol.
 					inactive = "☠️ tombstoned 🪦"
 				}
 				td.alert(
 					cc.name,
-					fmt.Sprintf("%s is no longer active: validator is %s", cc.valInfo.Moniker, inactive),
+					fmt.Sprintf("%s is no longer active: validator is %s", valInfo.Moniker, inactive),
 					"critical",
 					false,
 					&id,
 				)
-			} else if cc.valInfo.Bonded && !cc.lastValInfo.Bonded {
+			} else if valInfo.Bonded && !lastValInfo.Bonded {
 				td.alert(
 					cc.name,
-					fmt.Sprintf("%s is no longer active: validator is %s", cc.valInfo.Moniker, inactive),
+					fmt.Sprintf("%s is no longer active: validator is %s", valInfo.Moniker, inactive),
 					"info",
 					true,
 					&id,
@@ -838,10 +853,10 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 		if !missedAlarm && cc.Alerts.ConsecutiveAlerts && int(cc.statConsecutiveMiss) >= cc.Alerts.ConsecutiveMissed {
 			// alert on missed block counter!
 			missedAlarm = true
-			id := cc.valInfo.Valcons + "consecutive"
+			id := valInfo.Valcons + "consecutive"
 			td.alert(
 				cc.name,
-				fmt.Sprintf("%s has missed %d blocks on %s", cc.valInfo.Moniker, cc.Alerts.ConsecutiveMissed, cc.ChainId),
+				fmt.Sprintf("%s has missed %d blocks on %s", valInfo.Moniker, cc.Alerts.ConsecutiveMissed, cc.ChainId),
 				cc.Alerts.ConsecutivePriority,
 				false,
 				&id,
@@ -850,10 +865,10 @@ func (cc *ChainConfig) watch(ctx context.Context) {
 		} else if missedAlarm && int(cc.statConsecutiveMiss) < cc.Alerts.ConsecutiveMissed {
 			// clear the alert
 			missedAlarm = false
-			id := cc.valInfo.Valcons + "consecutive"
+			id := valInfo.Valcons + "consecutive"
 			td.alert(
 				cc.name,
-				fmt.Sprintf("%s has missed %d blocks on %s", cc.valInfo.Moniker, cc.Alerts.ConsecutiveMissed, cc.ChainId),
+				fmt.Sprintf("%s has missed %d blocks on %s", valInfo.Moniker, cc.Alerts.ConsecutiveMissed, cc.ChainId),
 				"info",
 				true,
 				&id,

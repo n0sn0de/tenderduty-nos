@@ -89,13 +89,14 @@ type ChainConfig struct {
 	stateMux                 *sync.RWMutex
 	localStateMux            sync.RWMutex
 	rpcMux                   sync.Mutex
+	monitoringMux            sync.RWMutex
 	connectionMux            sync.Mutex
 	name                     string
-	wsclient                 *TmConn       // custom websocket client to work around wss:// bugs in tendermint
-	client                   *rpchttp.HTTP // legit tendermint client
-	noNodes                  bool          // tracks if all nodes are down
-	valInfo                  *ValInfo      // recent validator state, only refreshed every few minutes
-	lastValInfo              *ValInfo      // use for detecting newly-jailed/tombstone
+	wsclient                 websocketConnection // custom websocket client to work around wss:// bugs in tendermint
+	client                   *rpchttp.HTTP       // legit tendermint client
+	noNodes                  bool                // tracks if all nodes are down
+	valInfo                  *ValInfo            // recent validator state, only refreshed every few minutes
+	lastValInfo              *ValInfo            // use for detecting newly-jailed/tombstone
 	blocksResults            []int
 	lastError                string
 	lastBlockTime            time.Time
@@ -134,12 +135,17 @@ type ChainConfig struct {
 
 // mkUpdate returns the info needed by prometheus for a gauge.
 func (cc *ChainConfig) mkUpdate(t metricType, v float64, node string) *promUpdate {
+	valInfo, _ := cc.validatorInfoSnapshot()
+	moniker := ""
+	if valInfo != nil {
+		moniker = valInfo.Moniker
+	}
 	return &promUpdate{
 		metric:   t,
 		counter:  v,
 		name:     cc.name,
 		chainId:  cc.ChainId,
-		moniker:  cc.valInfo.Moniker,
+		moniker:  moniker,
 		endpoint: node,
 	}
 }
@@ -282,7 +288,7 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 			wantsPublic = true
 		}
 
-		v.valInfo = &ValInfo{Moniker: "not connected"}
+		v.publishValidatorInfo(&ValInfo{Moniker: "not connected"}, false)
 
 		// the bools for enabling alerts are deprecated with full configs preferred,
 		// don't break if someone is still using them:
@@ -336,16 +342,17 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 			problems = append(problems, fmt.Sprintf("warn: %20s has no notifications configured", k))
 		}
 		if td.EnableDash {
+			valInfo, _ := v.validatorInfoSnapshot()
 			td.updateChan <- &dash.ChainStatus{
 				MsgType:      "status",
 				Name:         v.name,
 				ChainId:      v.ChainId,
-				Moniker:      v.valInfo.Moniker,
-				Bonded:       v.valInfo.Bonded,
-				Jailed:       v.valInfo.Jailed,
-				Tombstoned:   v.valInfo.Tombstoned,
-				Missed:       v.valInfo.Missed,
-				Window:       v.valInfo.Window,
+				Moniker:      valInfo.Moniker,
+				Bonded:       valInfo.Bonded,
+				Jailed:       valInfo.Jailed,
+				Tombstoned:   valInfo.Tombstoned,
+				Missed:       valInfo.Missed,
+				Window:       valInfo.Window,
 				Nodes:        len(v.Nodes),
 				HealthyNodes: 0,
 				ActiveAlerts: 0,

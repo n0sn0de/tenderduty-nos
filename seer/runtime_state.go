@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 // nodeRuntimeState is copied while holding the chain's shared durable-state lock.
@@ -72,6 +74,50 @@ func (cc *ChainConfig) durableStateMux() *sync.RWMutex {
 		return cc.stateMux
 	}
 	return &cc.localStateMux
+}
+
+func cloneValInfo(info *ValInfo) *ValInfo {
+	if info == nil {
+		return nil
+	}
+	clone := *info
+	clone.Conspub = append([]byte(nil), info.Conspub...)
+	return &clone
+}
+
+// monitoringSnapshot returns one coherent copy of the refreshable RPC and
+// validator state. Validator values are immutable after publication.
+func (cc *ChainConfig) monitoringSnapshot() (*rpchttp.HTTP, *ValInfo, *ValInfo) {
+	cc.monitoringMux.RLock()
+	defer cc.monitoringMux.RUnlock()
+	return cc.client, cloneValInfo(cc.valInfo), cloneValInfo(cc.lastValInfo)
+}
+
+func (cc *ChainConfig) rpcClientSnapshot() *rpchttp.HTTP {
+	client, _, _ := cc.monitoringSnapshot()
+	return client
+}
+
+func (cc *ChainConfig) setRPCClient(client *rpchttp.HTTP) {
+	cc.monitoringMux.Lock()
+	cc.client = client
+	cc.monitoringMux.Unlock()
+}
+
+func (cc *ChainConfig) validatorInfoSnapshot() (*ValInfo, *ValInfo) {
+	_, current, previous := cc.monitoringSnapshot()
+	return current, previous
+}
+
+// publishValidatorInfo atomically publishes a complete refresh. Startup
+// discovery does not retain the "not connected" placeholder as prior state.
+func (cc *ChainConfig) publishValidatorInfo(next *ValInfo, retainPrevious bool) {
+	cc.monitoringMux.Lock()
+	if retainPrevious {
+		cc.lastValInfo = cloneValInfo(cc.valInfo)
+	}
+	cc.valInfo = cloneValInfo(next)
+	cc.monitoringMux.Unlock()
 }
 
 func (c *Config) emitStat(ctx context.Context, update *promUpdate) bool {
