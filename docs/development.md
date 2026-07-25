@@ -74,6 +74,8 @@ the cancellation/WebSocket/runtime synchronization probes with:
 go test -count=20 ./seer -run 'Test(FirstPartyDependencySeamInjection|NewRPCPreservesOrderedFallbackAndSharedDeadline|NewRPCPropagatesParentCancellation|CometBFTRPCStatusFixtures|NewRPCPreservesWrongNetworkAndErrorPaths|ValidatorLookupAndAddressNormalizationFixtures|ValidatorKeyAlgorithmFixtures|ValidatorLookupMalformedAndMissingValues|BlockEventFixtureConversion|VoteEventFixtureConversion|NormalizeConsensusAddressCopiesBytesToUpperHex|ToBytesRetainsLegacyExportedCompatibility)$'
 go test -race -count=10 ./seer -run 'Test(WsRunCancellationSerializesOnePublishedWebSocketClose|ConcurrentRPCValidatorRefreshAndWebSocketWorkloadIsRaceFree|ShutdownDrainsAcceptedDeliveryBeforeSingleCheckpoint|CloseWebSocketsUnblocksRead|ShutdownDrainTimeoutSkipsCheckpointAndFails)$'
 go test -race -count=10 ./seer -run 'Test(ConcurrentPersistedMutationsAndSnapshotAreRaceFree|SnapshotSavedStateIsOneCoherentInstant)$'
+go test -count=20 ./seer -run 'Test(ListenerAddressesPreserveWildcardAndJoinExplicitHosts|MalformedPrometheusHostIsRejectedBeforeDashboardPartialStartup|DisabledListenersOpenNothing|ConfiguredListenersCancelBoundedlyCloseWebSocketStopAndRebind|IPv6LoopbackListenerUsesJoinedAddress|OccupiedSecondListenerRollsBackFirstListenerAndPropagatesStartupError|DashboardUpdateProducerUnblocksOnCancellation|RunConfiguredRestoresProcessConfigAfterCancellation|ShutdownKeepsAcceptedNotificationBeforeCheckpointWithListenerService)$'
+go test -race -count=10 ./seer -run 'Test(ConfiguredListenersCancelBoundedlyCloseWebSocketStopAndRebind|ShutdownKeepsAcceptedNotificationBeforeCheckpointWithListenerService)$'
 ```
 
 The first-party seam is internal: `seer/rpc_contract.go` defines the interfaces
@@ -88,7 +90,10 @@ intentionally confined to `seer/cometbft_adapter.go`:
 Go-1.26-compatible Sonic `v1.15.1` transitive override. The Go, container, and
 workflow pins are unchanged. Public endpoint discovery and the Gorilla
 WebSocket transport are existing non-Cosmos boundaries and remain direct until
-a later slice proves a second adapter is useful.
+a later slice proves a second adapter is useful. The inbound dashboard
+WebSocket is a separate owned HTTP-upgrade boundary: real-listener tests keep a
+connection idle across cancellation, require it to unblock, then prove both
+listener ports stop accepting and can be rebound.
 
 Run the same core checks without host Go:
 

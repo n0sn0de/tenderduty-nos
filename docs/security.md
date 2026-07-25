@@ -20,7 +20,19 @@ The example uses disabled integrations and `example.invalid`/`replace-me` placeh
 
 Neither listener provides authentication. `hide_logs: true` reduces detail but is not an authorization boundary. Bind host publishing to loopback or a trusted management network. For remote access, place an authenticated TLS reverse proxy in front and restrict `/ws`, `/state`, `/logs`, and `/metrics` consistently.
 
+On bare metal, optional `listen_host` and `prometheus_listen_host` values such
+as `127.0.0.1` or `::1` constrain the process listeners directly. Omitting them
+retains wildcard compatibility. In a bridged container, retain the process
+wildcard bind and publish only on host loopback, as in the example compose file;
+container loopback is not the host loopback interface.
+
 The dashboard now sends a restrictive Content Security Policy, referrer policy, permissions policy, and MIME-sniffing protection. These headers do not replace network access control.
+
+The dashboard routes remain read-only application views, but route shape or
+route removal is not a process-level read-only guarantee. The stronger boundary
+is that Seer has no signing material or transaction path, and the example
+container separately uses a read-only root filesystem with one explicit writable
+state volume. Keep those controls independent.
 
 ## Remote and encrypted config
 

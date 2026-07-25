@@ -4,10 +4,12 @@ Enable the exporter with existing compatibility keys:
 
 ```yaml
 prometheus_enabled: true
+# Optional on bare metal; omitted preserves wildcard compatibility.
+prometheus_listen_host: 127.0.0.1
 prometheus_listen_port: 28686
 ```
 
-The endpoint is `/metrics`. It has no built-in authentication; bind/publish it only on a trusted monitoring network.
+The endpoint is `/metrics`. It has no built-in authentication; bind/publish it only on a trusted monitoring network. Omit `prometheus_listen_host` to retain the historical wildcard process bind. In a bridged container, prefer the omitted process host plus a host-loopback port publication rather than binding container loopback.
 
 ## Compatibility contract
 

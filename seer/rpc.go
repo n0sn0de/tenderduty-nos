@@ -102,7 +102,7 @@ func (cc *ChainConfig) newRpc(parent context.Context) error {
 		if valInfo == nil {
 			valInfo = &ValInfo{}
 		}
-		td.updateChan <- &dash.ChainStatus{
+		_ = td.emitDashboardUpdate(ctx, &dash.ChainStatus{
 			MsgType:      "status",
 			Name:         cc.name,
 			ChainId:      cc.ChainId,
@@ -118,7 +118,7 @@ func (cc *ChainConfig) newRpc(parent context.Context) error {
 			Height:       0,
 			LastError:    cc.lastError,
 			Blocks:       cc.blockResultsSnapshot(),
-		}
+		})
 	}
 	return errors.New("no usable endpoints available for " + cc.ChainId)
 }

@@ -53,12 +53,53 @@ remain separate existing boundaries; they were not redesigned in this slice.
 
 ## Inbound listeners
 
-| Listener | Default | Authentication | Guidance |
-|---|---:|---|---|
-| Dashboard + WebSocket | `8888` | none | Bind to loopback/private management networks; use an authenticated TLS proxy for wider access. |
-| Prometheus | `28686` | none | Scrape from a trusted monitoring network; metric labels can reveal validator metadata. |
+| Listener | Host when omitted | Port | Authentication | Guidance |
+|---|---|---:|---|---|
+| Dashboard + WebSocket | wildcard (compatibility default) | `8888` | none | On bare metal, set `listen_host` to loopback/private management IP; use an authenticated TLS proxy for wider access. |
+| Prometheus | wildcard (compatibility default) | `28686` | none | On bare metal, set `prometheus_listen_host` to loopback/trusted monitoring IP; labels can reveal validator metadata. |
 
-Both are controlled by existing YAML keys. A disabled listener is not opened. The current config accepts ports, not arbitrary bind addresses; the example compose file therefore publishes them on host loopback.
+The original enable and port keys remain unchanged. Optional `listen_host` and
+`prometheus_listen_host` keys add explicit hostname/IPv4/IPv6 binding without
+changing the omitted wildcard behavior. Addresses are validated together and
+constructed with `net.JoinHostPort` before either service starts. Disabled
+listeners open nothing. The example compose file deliberately keeps process
+hosts omitted and publishes the wildcard container listeners on **host**
+loopback; binding container loopback would make ordinary bridged publication
+unreachable.
+
+### Listener ownership and shutdown
+
+```text
+load + validate both enabled addresses
+             |
+             v
+ synchronously pre-bind owned listeners
+ (rollback all if either bind fails)
+             |
+             v
+ dashboard service             Prometheus service
+ explicit http.Server          explicit http.Server
+ explicit ServeMux             explicit ServeMux
+ cache broadcaster worker      metrics update worker
+ tracked /ws connections       /metrics handler
+             \                 /
+              runtime lifecycle
+```
+
+The process starts monitoring only after every enabled listener has been
+validated and pre-bound. Unexpected serve errors cancel the shared runtime and
+are returned to `main`; no listener goroutine calls `log.Fatal`. SIGINT, SIGTERM,
+SIGHUP, or parent-context cancellation stops new alert ingress, cancels monitors,
+closes outbound RPC WebSockets, closes inbound dashboard WebSockets, performs
+bounded HTTP `Shutdown`, closes listeners, and joins service workers. Accepted
+notifications still drain before the single durable checkpoint. An incomplete
+drain still fails without claiming a checkpoint, preserving the existing state
+contract.
+
+Dashboard `Shutdown` tracks upgraded/hijacked `/ws` connections explicitly,
+because `net/http` does not own them after upgrade. Cancellation closes those
+connections and unblocks otherwise idle handlers before the service join. After
+successful shutdown neither listener accepts and both ports can be rebound.
 
 ## Outbound trust boundaries
 
@@ -73,4 +114,4 @@ The state JSON stores recent block results and alert-suppression timestamps. It 
 
 ## Dashboard assets
 
-The dashboard is embedded at build time and uses first-party HTML/CSS/vanilla JavaScript only. UIkit, Lodash, upstream logos, and legacy screenshots were removed after confirming that the small interface needed only a narrow subset of their behavior. Future committee-owned visual assets can be added under `seer/static/` and referenced from `index.html`; this foundation intentionally ships only text/CSS fallbacks.
+The dashboard is embedded at build time and uses first-party HTML/CSS/vanilla JavaScript only. UIkit, Lodash, upstream logos, and legacy screenshots were removed after confirming that the small interface needed only a narrow subset of their behavior. Future committee-owned visual assets can be added under `seer/static/` and referenced from `index.html`; this foundation intentionally ships only text/CSS fallbacks. The existing `/`, `/state`, `/logs`, `/logsenabled`, and `/ws` routes remain unchanged. Their read-only application shape is not treated as a process-level read-only guarantee; no-signing design and container/filesystem permissions remain separate trust boundaries.

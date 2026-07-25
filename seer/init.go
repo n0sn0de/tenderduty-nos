@@ -24,11 +24,20 @@ func init() {
 		for msg := range logs {
 			msg = strings.TrimRight(strings.TrimLeft(fmt.Sprint(msg), "["), "]")
 			log.Println("NosNode🔮 | ", msg)
-			if td.EnableDash && !td.HideLogs && td.logChan != nil {
-				td.logChan <- dash.LogMessage{
+			config := td
+			if config.EnableDash && !config.HideLogs && config.logChan != nil {
+				message := dash.LogMessage{
 					MsgType: "log",
 					Ts:      time.Now().UTC().Unix(),
 					Msg:     msg.(string),
+				}
+				var canceled <-chan struct{}
+				if config.ctx != nil {
+					canceled = config.ctx.Done()
+				}
+				select {
+				case config.logChan <- message:
+				case <-canceled:
 				}
 			}
 		}

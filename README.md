@@ -8,7 +8,7 @@
 
 This repository is a modernized fork of the archived [`blockpane/tenderduty`](https://github.com/blockpane/tenderduty). The original MIT copyright and license remain intact; see [provenance](docs/provenance.md).
 
-> **Modernization status:** Phase 1 established the supported pinned Go toolchain, deterministic build gates, non-root scratch container, runtime rebrand, compatibility tests, and operator documentation. Phase 2 now isolates the consensus dependency behind internal first-party interfaces and runs the adapter on the active Cosmos SDK `v0.53.7` / CometBFT `v0.38.23` compatibility family. The migration preserves existing operator/runtime contracts and removes one reviewed symbol-reachable vulnerability; the legacy OpenPGP baseline remains explicit. See [architecture](docs/architecture.md), [security](docs/security.md), and [roadmap](docs/roadmap.md).
+> **Modernization status:** Phase 1 established the supported pinned Go toolchain, deterministic build gates, non-root scratch container, runtime rebrand, compatibility tests, and operator documentation. Phase 2 isolates the consensus dependency behind internal first-party interfaces and runs the adapter on the active Cosmos SDK `v0.53.7` / CometBFT `v0.38.23` compatibility family. Phase 3 slice 1 adds optional listener hosts plus owned, bounded dashboard/WebSocket and Prometheus shutdown without changing omitted wildcard binds. The migration preserves existing operator/runtime contracts and removes one reviewed symbol-reachable vulnerability; the legacy OpenPGP baseline remains explicit. See [architecture](docs/architecture.md), [security](docs/security.md), and [roadmap](docs/roadmap.md).
 
 ## What it watches
 
@@ -39,6 +39,12 @@ The example compose file binds the public application defaults to loopback only:
 
 Do not expose either listener to an untrusted network without an authenticated TLS reverse proxy. The dashboard has no built-in authentication.
 
+For a bare-metal local-only process, set `listen_host: 127.0.0.1` and
+`prometheus_listen_host: 127.0.0.1` (or `::1`). Omitted host keys intentionally
+retain the historical wildcard bind. In the checked-in bridged compose example,
+leave process hosts omitted and keep the existing host-loopback publications;
+container loopback would not be reachable through normal port publishing.
+
 Generate the canonical example without starting monitoring:
 
 ```sh
@@ -47,7 +53,7 @@ podman run --rm --network none nosnode-seer:local -example-config
 
 ## Compatibility promises in this slice
 
-Existing Tenderduty YAML keys, flags, environment variables, dashboard endpoints, and `tenderduty_*` Prometheus metric names are preserved. Legacy state JSON remains directly readable; new atomic checkpoints preserve the legacy fields, add only a rollback-safe top-level version field, and maintain a `.bak` copy. An old Tenderduty writer may remove the unknown version field on rollback; Seer reads that result as legacy version 0. The default state path is now `.nosnode-seer-state.json`; when no `-state` flag is given and only `.tenderduty-state.json` exists, Seer deterministically uses the legacy file and emits a migration notice. The container retains historical UID/GID `26657:26657` and a deprecated `/bin/tenderduty` plus `/var/lib/tenderduty` bridge for one migration cycle.
+Existing Tenderduty YAML keys, flags, environment variables, dashboard endpoints, ports, and `tenderduty_*` Prometheus metric names/labels are preserved. Optional `listen_host` and `prometheus_listen_host` keys constrain enabled process listeners; omission preserves wildcard behavior and disabled listeners still open nothing. Legacy state JSON remains directly readable; new atomic checkpoints preserve the legacy fields, add only a rollback-safe top-level version field, and maintain a `.bak` copy. An old Tenderduty writer may remove the unknown version field on rollback; Seer reads that result as legacy version 0. The default state path is now `.nosnode-seer-state.json`; when no `-state` flag is given and only `.tenderduty-state.json` exists, Seer deterministically uses the legacy file and emits a migration notice. The container retains historical UID/GID `26657:26657` and a deprecated `/bin/tenderduty` plus `/var/lib/tenderduty` bridge for one migration cycle.
 
 See the complete [migration and compatibility table](docs/migration.md) before replacing an existing process.
 

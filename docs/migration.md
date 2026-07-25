@@ -16,12 +16,31 @@ Stop the old process, back up config and state, then test Seer with an explicit 
 | State default | `.tenderduty-state.json` | `.nosnode-seer-state.json` | Automatic legacy fallback when only the old default exists; explicit `-state` always wins. |
 | Metrics | `tenderduty_*` names and labels | Preserved exactly | Do not rewrite dashboards/alerts. |
 | Dashboard HTTP | `/`, `/state`, `/logs`, `/logsenabled`, `/ws` | Preserved | Theme/copy changed; consumers keep endpoints. |
+| Dashboard bind host | wildcard; port-only `listen_port` | Optional `listen_host`; omitted/blank remains wildcard | Bare metal may set `127.0.0.1`, `::1`, or a management IP. Keep omitted in a bridged container whose host publication is already loopback. |
+| Prometheus bind host | wildcard; port-only `prometheus_listen_port` | Optional `prometheus_listen_host`; omitted/blank remains wildcard | Same bare-metal/container distinction as dashboard. |
+| Listener lifecycle | process-owned only by goroutine lifetime | explicit mux/server/listener ownership, bounded shutdown and service joins | No YAML/port/route change. Startup bind errors now return nonzero instead of terminating from a background goroutine. |
 | Dashboard assets | UIkit/Lodash and upstream visuals | First-party CSS/vanilla JS, no visual bundle | Clear browser cache after cutover. |
 | Alert identity | Tenderduty wording | `NosNode🔮` in Slack, Discord, Telegram, and PagerDuty summaries | Routing/dedup keys remain unchanged. |
 | Alert delivery state | Destination marked sent before network acceptance; unbounded per-event goroutines | Commit after acceptance, bounded deadlines/workers, destination-safe retries | No YAML change. Review [delivery guarantees](notifications.md#delivery-guarantees-and-retry-policy); queued events remain in-memory only. |
 | Go module | `github.com/blockpane/tenderduty/v2` | `github.com/n0sn0de/tenderduty-nos` | Downstream Go imports must update; this executable did not promise a stable library API. |
 | Go package path | `/td2` | `/seer` | Update downstream imports if any. |
 | Container user | historical numeric non-root `26657:26657` | retained as `26657:26657` in the scratch runtime for this migration cycle | Existing directories owned by `26657:26657` at mode `0755`, configs/state at `0644`, and private state at `0600` remain usable. |
+
+### Listener compatibility table
+
+| Enabled | Host key | Bind behavior | Compatibility/action |
+|---|---|---|---|
+| false | any value | no socket | Unchanged; disabled listeners open nothing. |
+| true | omitted or blank | wildcard + existing port | Unchanged default; keep existing firewall/container publishing controls. |
+| true | `127.0.0.1` | IPv4 loopback + existing port | Recommended bare-metal local-only option. |
+| true | `::1` | IPv6 loopback + existing port | Recommended where IPv6 loopback is operational. Do not add brackets. |
+| true | interface IP/valid hostname | explicit interface/resolved host + existing port | Validate reachability and external authentication before cutover. |
+
+All enabled listener addresses are validated before either service starts. If
+the second bind fails, the first pre-bound socket is closed, so retrying after
+the operator fixes the conflict does not require killing a leaked listener.
+Ports `8888` and `28686`, routes, metric names/labels, CLI flags, and container
+publishing remain unchanged.
 
 ## Deterministic state fallback
 
