@@ -2,7 +2,7 @@
 
 This roadmap is sequencing, not a release promise.
 
-## Phase 1 — foundation (this slice)
+## Phase 1 — foundation (complete)
 
 - supported Go 1.26.5 build/test/race/vet gates;
 - pinned static/security tools and an exact reviewed vulnerability baseline;
@@ -13,15 +13,22 @@ This roadmap is sequencing, not a release promise.
 - preserve YAML, flag, endpoint, state schema, notification semantics, and metrics compatibility;
 - remove unused UIkit/Lodash/logo/screenshots and consolidate operator setup.
 
-## Phase 2 — dependency seam
+## Phase 2 — dependency seam (in progress)
 
-- isolate Tendermint/Cosmos-specific types behind narrow interfaces;
-- add fixture-driven RPC, validator-address, and block-event tests;
-- evaluate a compatible CometBFT/Cosmos SDK line rather than blind bulk upgrades;
+Completed in the first bounded slice:
+
+- core endpoint selection, health checking, validator refresh, and WebSocket monitoring now consume first-party RPC interfaces and DTOs rather than Tendermint/Cosmos response types;
+- the legacy Tendermint/Cosmos implementation is concentrated in `seer/tendermint_adapter.go`, including status translation, staking/slashing protobuf queries, Bech32 conversion, validator-key handling, and block/vote wire-event conversion;
+- deterministic local fixtures cover complete, malformed, missing-field, non-validator, wrong-network, and RPC-error paths while retaining the existing lifecycle and alerting tests.
+
+Still deferred:
+
+- evaluate a compatible CometBFT/Cosmos SDK line through the seam rather than by bulk upgrade;
 - eliminate the reviewed govulncheck baseline as fixes become behaviorally verified;
-- replace legacy remote-config crypto only with an explicit migration format/version.
+- replace legacy remote-config crypto only with an explicit migration format/version;
+- decide whether public endpoint discovery and WebSocket transport construction need separate injectable adapters after a candidate dependency line is tested.
 
-The exact blocker is the current Cosmos SDK `v0.45.11` / Tendermint `v0.34.24` compatibility line and its transitive OpenPGP initialization path. A major dependency jump changes RPC and validator behavior and is outside a truthful foundation patch.
+This slice deliberately does **not** change Cosmos SDK, Tendermint, Go, container, workflow, or vulnerability baselines. The exact blocker remains the current Cosmos SDK `v0.45.11` / Tendermint `v0.34.24` compatibility line and its transitive OpenPGP initialization path. A major dependency jump changes RPC and validator behavior and requires a later, separately reviewed compatibility evaluation.
 
 ## Phase 3 — runtime hardening
 

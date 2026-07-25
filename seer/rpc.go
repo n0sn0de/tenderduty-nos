@@ -12,7 +12,6 @@ import (
 	"time"
 
 	dash "github.com/n0sn0de/tenderduty-nos/seer/dashboard"
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 // newRpc sets up the rpc client used for monitoring. It will try nodes in order until a working node is found.
@@ -27,13 +26,13 @@ func (cc *ChainConfig) newRpc(parent context.Context) error {
 	for _, endpoint := range cc.Nodes {
 		anyWorking = anyWorking || !cc.nodeState(endpoint).down
 	}
-	tryURL := func(endpointURL string) (client *rpchttp.HTTP, msg string, down, syncing bool) {
+	tryURL := func(endpointURL string) (client rpcClient, msg string, down, syncing bool) {
 		if _, err := url.Parse(endpointURL); err != nil {
 			msg = fmt.Sprintf("❌ could not parse url %s: (%s) %s", cc.name, endpointURL, err)
 			l(msg)
 			return nil, msg, true, false
 		}
-		candidate, err := rpchttp.New(endpointURL, "/websocket")
+		candidate, err := cc.openRPCClient(endpointURL, "/websocket")
 		if err != nil {
 			msg = fmt.Sprintf("❌ could not connect client for %s: (%s) %s", cc.name, endpointURL, err)
 			l(msg)
@@ -45,12 +44,12 @@ func (cc *ChainConfig) newRpc(parent context.Context) error {
 			l(msg)
 			return nil, msg, true, false
 		}
-		if status.NodeInfo.Network != cc.ChainId {
-			msg = fmt.Sprintf("chain id %s on %s does not match, expected %s, skipping", status.NodeInfo.Network, endpointURL, cc.ChainId)
+		if status.Network != cc.ChainId {
+			msg = fmt.Sprintf("chain id %s on %s does not match, expected %s, skipping", status.Network, endpointURL, cc.ChainId)
 			l(msg)
 			return nil, msg, true, false
 		}
-		if status.SyncInfo.CatchingUp {
+		if status.CatchingUp {
 			msg = fmt.Sprint("🐢 node is not synced, skipping ", endpointURL)
 			l(msg)
 			return nil, msg, true, true
@@ -153,7 +152,7 @@ func (cc *ChainConfig) monitorHealth(ctx context.Context, chainName string) {
 						}
 						l("⚠️ " + state.lastMsg)
 					}
-					client, err := rpchttp.New(node.Url, "/websocket")
+					client, err := cc.openRPCClient(node.Url, "/websocket")
 					if err != nil {
 						markUnhealthy(err.Error())
 						return
@@ -165,11 +164,11 @@ func (cc *ChainConfig) monitorHealth(ctx context.Context, chainName string) {
 						markUnhealthy("down")
 						return
 					}
-					if status.NodeInfo.Network != cc.ChainId {
+					if status.Network != cc.ChainId {
 						markUnhealthy("on the wrong network")
 						return
 					}
-					if status.SyncInfo.CatchingUp {
+					if status.CatchingUp {
 						markUnhealthy("not synced")
 						cc.updateNodeState(node, func(state *nodeRuntimeState) { state.syncing = true })
 						return

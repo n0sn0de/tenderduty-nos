@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "query": "tm.event='Vote'",
+    "data": {
+      "type": "tendermint/event/Vote",
+      "value": {
+        "Vote": {
+          "type": 1,
+          "height": "43",
+          "validator_address": "861009EC4D599FAB1F40ABC76E6F89880CFF5833"
+        }
+      }
+    }
+  }
+}

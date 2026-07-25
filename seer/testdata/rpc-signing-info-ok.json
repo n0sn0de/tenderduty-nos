@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "response": {
+      "code": 0,
+      "log": "",
+      "info": "",
+      "index": "0",
+      "key": null,
+      "value": "CkUKNGNvc21vc3ZhbGNvbnMxc2NncW5temR0eDA2azg2cTQwcmt1bXVmM3F4MDdrcG4ydWwyNHAiCwiAkrjDmP7///8BMAc=",
+      "proofOps": null,
+      "height": "1",
+      "codespace": ""
+    }
+  }
+}

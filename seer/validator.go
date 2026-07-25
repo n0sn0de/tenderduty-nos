@@ -2,18 +2,10 @@ package seer
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
-	"github.com/cosmos/cosmos-sdk/types/bech32"
-	slashing "github.com/cosmos/cosmos-sdk/x/slashing/types"
-	staking "github.com/cosmos/cosmos-sdk/x/staking/types"
-	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 // ValInfo holds most of the stats/info used for secondary alarms. It is refreshed roughly every minute.
@@ -29,7 +21,7 @@ type ValInfo struct {
 }
 
 // GetValInfo refreshes validator data. The first bool controls startup-only detail logging.
-func (cc *ChainConfig) GetValInfo(parent context.Context, first bool) (err error) {
+func (cc *ChainConfig) GetValInfo(parent context.Context, first bool) error {
 	// Serialize endpoint selection and validator refresh so one refresh uses one
 	// client throughout its network queries. Published state remains lock-free
 	// during the I/O and is swapped atomically only after a complete refresh.
@@ -48,13 +40,17 @@ func (cc *ChainConfig) GetValInfo(parent context.Context, first bool) (err error
 		next.Window = current.Window
 	}
 
-	// Fetch info from /cosmos.staking.v1beta1.Query/Validator
-	// it's easier to ask people to provide valoper since it's readily available on
-	// explorers, so make it easy and lookup the consensus key for them.
-	next.Conspub, next.Moniker, next.Jailed, next.Bonded, err = getVal(ctx, client, cc.ValAddress)
+	// Fetch validator identity through the first-party RPC seam. Operators can
+	// provide valoper because it is readily available on explorers; the adapter
+	// resolves the consensus key used by monitoring.
+	validator, err := client.Validator(ctx, cc.ValAddress)
 	if err != nil {
-		return
+		return err
 	}
+	next.Conspub = append([]byte(nil), validator.ConsensusAddress...)
+	next.Moniker = validator.Moniker
+	next.Jailed = validator.Jailed
+	next.Bonded = validator.Bonded
 	if first && next.Bonded {
 		l(fmt.Sprintf("⚙️ found %s (%s) in validator set", cc.ValAddress, next.Moniker))
 	} else if first && !next.Bonded {
@@ -72,69 +68,41 @@ func (cc *ChainConfig) GetValInfo(parent context.Context, first bool) (err error
 		split := strings.Split(cc.ValAddress, "valoper")
 		if len(split) != 2 {
 			if pre, ok := altValopers.getAltPrefix(cc.ValAddress); ok {
-				next.Valcons, err = bech32.ConvertAndEncode(pre, next.Conspub[:20])
+				next.Valcons, err = cc.encodeConsensusAddress(pre, next.Conspub[:20])
 				if err != nil {
-					return
+					return err
 				}
 			} else {
-				err = errors.New("❓ could not determine bech32 prefix from valoper address: " + cc.ValAddress)
-				return
+				return errors.New("❓ could not determine bech32 prefix from valoper address: " + cc.ValAddress)
 			}
 		} else {
 			prefix = split[0] + "valcons"
-			next.Valcons, err = bech32.ConvertAndEncode(prefix, next.Conspub[:20])
+			next.Valcons, err = cc.encodeConsensusAddress(prefix, next.Conspub[:20])
 			if err != nil {
-				return
+				return err
 			}
 		}
 		if first {
 			l("⚙️", cc.ValAddress[:20], "... is using consensus key:", next.Valcons)
 		}
-
 	}
 
-	// get current signing information (tombstoned, missed block count)
-	qSigning := slashing.QuerySigningInfoRequest{ConsAddress: next.Valcons}
-	b, err := qSigning.Marshal()
+	signing, err := client.SigningInfo(ctx, next.Valcons)
 	if err != nil {
 		return err
 	}
-	resp, err := client.ABCIQuery(ctx, "/cosmos.slashing.v1beta1.Query/SigningInfo", b)
-	if err != nil {
-		return err
-	}
-	if resp == nil || resp.Response.Value == nil {
-		return errors.New("could not query validator slashing status, got empty response")
-	}
-	slash := &slashing.QuerySigningInfoResponse{}
-	if err = slash.Unmarshal(resp.Response.Value); err != nil {
-		return err
-	}
-	next.Tombstoned = slash.ValSigningInfo.Tombstoned
+	next.Tombstoned = signing.Tombstoned
 	if next.Tombstoned {
 		l(fmt.Sprintf("❗️☠️ %s (%s) is tombstoned 🪦❗️", cc.ValAddress, next.Moniker))
 	}
-	next.Missed = slash.ValSigningInfo.MissedBlocksCounter
+	next.Missed = signing.MissedBlocks
 
-	// finally get the signed blocks window
 	if next.Window == 0 {
-		qParams := &slashing.QueryParamsRequest{}
-		b, err = qParams.Marshal()
+		params, err := client.SlashingParams(ctx)
 		if err != nil {
 			return err
 		}
-		resp, err = client.ABCIQuery(ctx, "/cosmos.slashing.v1beta1.Query/Params", b)
-		if err != nil {
-			return err
-		}
-		if resp == nil || resp.Response.Value == nil {
-			return errors.New("🛑 could not query slashing params, got empty response")
-		}
-		params := &slashing.QueryParamsResponse{}
-		if err = params.Unmarshal(resp.Response.Value); err != nil {
-			return err
-		}
-		next.Window = params.Params.SignedBlocksWindow
+		next.Window = params.SignedBlocksWindow
 	}
 
 	cc.publishValidatorInfo(next, !first)
@@ -146,68 +114,4 @@ func (cc *ChainConfig) GetValInfo(parent context.Context, first bool) (err error
 		}
 	}
 	return nil
-}
-
-// getVal returns the public key, moniker, and if the validator is jailed.
-func getVal(ctx context.Context, client *rpchttp.HTTP, valoper string) (pub []byte, moniker string, jailed, bonded bool, err error) {
-	if strings.Contains(valoper, "valcons") {
-		_, bz, err := bech32.DecodeAndConvert(valoper)
-		if err != nil {
-			return nil, "", false, false, errors.New("could not decode and convert your address" + valoper)
-		}
-
-		hexAddress := fmt.Sprintf("%X", bz)
-		return ToBytes(hexAddress), valoper, false, true, nil
-	}
-
-	q := staking.QueryValidatorRequest{
-		ValidatorAddr: valoper,
-	}
-	b, err := q.Marshal()
-	if err != nil {
-		return
-	}
-	resp, err := client.ABCIQuery(ctx, "/cosmos.staking.v1beta1.Query/Validator", b)
-	if err != nil {
-		return
-	}
-	if resp.Response.Value == nil {
-		return nil, "", false, false, errors.New("could not find validator " + valoper)
-	}
-	val := &staking.QueryValidatorResponse{}
-	err = val.Unmarshal(resp.Response.Value)
-	if err != nil {
-		return
-	}
-	if val.Validator.ConsensusPubkey == nil {
-		return nil, "", false, false, errors.New("got invalid consensus pubkey for " + valoper)
-	}
-
-	pubBytes := make([]byte, 0)
-	switch val.Validator.ConsensusPubkey.TypeUrl {
-	case "/cosmos.crypto.ed25519.PubKey":
-		pk := ed25519.PubKey{}
-		err = pk.Unmarshal(val.Validator.ConsensusPubkey.Value)
-		if err != nil {
-			return
-		}
-		pubBytes = pk.Address().Bytes()
-	case "/cosmos.crypto.secp256k1.PubKey":
-		pk := secp256k1.PubKey{}
-		err = pk.Unmarshal(val.Validator.ConsensusPubkey.Value)
-		if err != nil {
-			return
-		}
-		pubBytes = pk.Address().Bytes()
-	}
-	if len(pubBytes) == 0 {
-		return nil, "", false, false, errors.New("could not get pubkey for" + valoper)
-	}
-
-	return pubBytes, val.Validator.GetMoniker(), val.Validator.Jailed, val.Validator.Status == 3, nil
-}
-
-func ToBytes(address string) []byte {
-	bz, _ := hex.DecodeString(strings.ToLower(address))
-	return bz
 }

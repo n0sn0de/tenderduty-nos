@@ -2,7 +2,6 @@ package seer
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,87 +11,48 @@ import (
 	"testing"
 	"time"
 
-	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	cosmosed25519 "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
-	slashing "github.com/cosmos/cosmos-sdk/x/slashing/types"
-	staking "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/gorilla/websocket"
-	abci "github.com/tendermint/tendermint/abci/types"
-	tmed25519 "github.com/tendermint/tendermint/crypto/ed25519"
-	"github.com/tendermint/tendermint/p2p"
-	coretypes "github.com/tendermint/tendermint/rpc/core/types"
-	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
 )
 
 func TestConcurrentRPCValidatorRefreshAndWebSocketWorkloadIsRaceFree(t *testing.T) {
-	const chainID = "state-race-1"
-	const validatorAddress = "cosmosvaloper1staterefresh"
+	const chainID = "fixture-1"
+	const validatorAddress = fixtureValoper
 
 	websocketStarted := make(chan struct{})
 	var websocketStartedOnce sync.Once
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 
-	pubkey := &cosmosed25519.PubKey{Key: []byte("01234567890123456789012345678901")}
-	consensusAddress := strings.ToUpper(hex.EncodeToString(pubkey.Address().Bytes()))
-	consensusAny, err := codectypes.NewAnyWithValue(pubkey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	validatorResponse, err := (&staking.QueryValidatorResponse{Validator: staking.Validator{
-		OperatorAddress: validatorAddress,
-		ConsensusPubkey: consensusAny,
-		Status:          staking.Bonded,
-		Description:     staking.Description{Moniker: "state-race-validator"},
-	}}).Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	signingResponse, err := (&slashing.QuerySigningInfoResponse{ValSigningInfo: slashing.ValidatorSigningInfo{
-		Address:             "cosmosvalcons1staterefresh",
-		MissedBlocksCounter: 7,
-	}}).Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	paramsResponse, err := (&slashing.QueryParamsResponse{Params: slashing.Params{SignedBlocksWindow: 100}}).Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
+	consensusAddress := fixtureConsensusHex
 
+	fixtureResult := func(name string) any {
+		var response map[string]any
+		if err := json.Unmarshal(loadFixture(t, name), &response); err != nil {
+			t.Fatalf("decode fixture %s: %v", name, err)
+		}
+		return response["result"]
+	}
+	statusResult := fixtureResult("rpc-status-ok.json")
 	writeResult := func(writer http.ResponseWriter, id int, result any) {
 		writer.Header().Set("Content-Type", "application/json")
-		response := rpctypes.NewRPCSuccessResponse(rpctypes.JSONRPCIntID(id), result)
+		response := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
 		if err := json.NewEncoder(writer).Encode(response); err != nil {
 			t.Errorf("encode RPC response: %v", err)
 		}
 	}
-	abciValue := func(queryPath string) []byte {
+	abciResult := func(queryPath string) any {
 		if unquoted, unquoteErr := strconv.Unquote(queryPath); unquoteErr == nil {
 			queryPath = unquoted
 		}
 		switch queryPath {
-		case "/cosmos.staking.v1beta1.Query/Validator":
-			return validatorResponse
-		case "/cosmos.slashing.v1beta1.Query/SigningInfo":
-			return signingResponse
-		case "/cosmos.slashing.v1beta1.Query/Params":
-			return paramsResponse
+		case stakingValidatorQuery:
+			return fixtureResult("rpc-validator-ok.json")
+		case signingInfoQuery:
+			return fixtureResult("rpc-signing-info-ok.json")
+		case slashingParamsQuery:
+			return fixtureResult("rpc-slashing-params-ok.json")
 		default:
 			t.Errorf("unexpected ABCI query path %q", queryPath)
 			return nil
-		}
-	}
-	statusResult := func() *coretypes.ResultStatus {
-		return &coretypes.ResultStatus{
-			NodeInfo: p2p.DefaultNodeInfo{Network: chainID},
-			SyncInfo: coretypes.SyncInfo{
-				LatestBlockHeight:   1,
-				LatestBlockTime:     time.Unix(1, 0).UTC(),
-				EarliestBlockHeight: 1,
-				EarliestBlockTime:   time.Unix(1, 0).UTC(),
-				CatchingUp:          false,
-			},
-			ValidatorInfo: coretypes.ValidatorInfo{PubKey: tmed25519.PubKey(make([]byte, tmed25519.PubKeySize))},
 		}
 	}
 
@@ -113,17 +73,17 @@ func TestConcurrentRPCValidatorRefreshAndWebSocketWorkloadIsRaceFree(t *testing.
 			}
 			switch call.Method {
 			case "status":
-				writeResult(writer, call.ID, statusResult())
+				writeResult(writer, call.ID, statusResult)
 			case "abci_query":
-				writeResult(writer, call.ID, &coretypes.ResultABCIQuery{Response: abci.ResponseQuery{Value: abciValue(call.Params.Path), Height: 1}})
+				writeResult(writer, call.ID, abciResult(call.Params.Path))
 			default:
 				t.Errorf("unexpected JSON-RPC method %q", call.Method)
 				http.Error(writer, "unexpected method", http.StatusNotFound)
 			}
 		case "/status":
-			writeResult(writer, -1, statusResult())
+			writeResult(writer, -1, statusResult)
 		case "/abci_query":
-			writeResult(writer, -1, &coretypes.ResultABCIQuery{Response: abci.ResponseQuery{Value: abciValue(request.URL.Query().Get("path")), Height: 1}})
+			writeResult(writer, -1, abciResult(request.URL.Query().Get("path")))
 		case "/websocket":
 			connection, upgradeErr := upgrader.Upgrade(writer, request, nil)
 			if upgradeErr != nil {

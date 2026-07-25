@@ -25,6 +25,31 @@ chain/validator state --> alert fan-out --> configured third-party integrations
 
 The `seer` package owns config loading, RPC health, WebSocket monitoring, state, alert suppression, and metrics. `seer/dashboard` serves the embedded HTML, CSS, and JavaScript and broadcasts cached status/log messages. `main` owns CLI parsing, version output, state-path compatibility, and config encryption/decryption commands.
 
+## Consensus dependency seam
+
+Core monitoring uses the internal `rpcClient`, `rpcClientFactory`, and
+`validatorAddressCodec` interfaces plus first-party status, validator, slashing,
+block-event, and vote-event DTOs. `ChainConfig` reads the client and validator
+snapshots under the existing monitoring lock where a coherent read is required.
+Client replacement and validator publication remain separate locked operations,
+matching the existing endpoint-selection and refresh sequence rather than adding
+an atomic cross-operation guarantee.
+
+`seer/tendermint_adapter.go` is the only Go source file that directly imports the
+Cosmos SDK or Tendermint. It owns the current `rpchttp.HTTP` client, Cosmos
+staking/slashing protobuf requests and responses, Ed25519/secp256k1 consensus-key
+handling, Bech32 conversion, and Tendermint block/vote wire decoding. Core RPC
+selection sees only network/catch-up status; validator refresh sees only the
+fields used by alarms, metrics, and the dashboard; block/vote handlers see only
+normalized event DTOs.
+
+The seam is internal and does not add a supported public Go API. The current
+adapter still targets Cosmos SDK `v0.45.11` and Tendermint `v0.34.24`. A future
+CometBFT/Cosmos evaluation must implement the same narrow semantics and pass the
+local fixtures before replacing that adapter. Public endpoint discovery and the
+Gorilla WebSocket transport remain separate existing boundaries; they were not
+redesigned in this slice.
+
 ## Inbound listeners
 
 | Listener | Default | Authentication | Guidance |
