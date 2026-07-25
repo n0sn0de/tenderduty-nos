@@ -198,7 +198,7 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 				}
 				cc.activeAlerts = td.alarmState().getCount(cc.name)
 				if td.EnableDash {
-					td.updateChan <- &dash.ChainStatus{
+					if !td.emitDashboardUpdate(ctx, &dash.ChainStatus{
 						MsgType:      "status",
 						Name:         cc.name,
 						ChainId:      cc.ChainId,
@@ -214,6 +214,8 @@ func (cc *ChainConfig) WsRun(parent context.Context) {
 						Height:       update.Height,
 						LastError:    info,
 						Blocks:       blocks,
+					}) {
+						return
 					}
 				}
 				if td.Prom {

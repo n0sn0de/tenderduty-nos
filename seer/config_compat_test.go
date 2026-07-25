@@ -43,6 +43,9 @@ chains:
 	if !config.EnableDash || config.Listen != "8888" || config.HideLogs {
 		t.Fatalf("dashboard compatibility fields not decoded: enabled=%v listen=%q hide_logs=%v", config.EnableDash, config.Listen, config.HideLogs)
 	}
+	if config.ListenHost != "" || config.PrometheusListenHost != "" {
+		t.Fatalf("omitted listener hosts changed wildcard defaults: dashboard=%q prometheus=%q", config.ListenHost, config.PrometheusListenHost)
+	}
 	if !config.Prom || config.PrometheusListenPort != 28686 || config.NodeDownMin != 7 {
 		t.Fatalf("global compatibility fields not decoded: prometheus=%v port=%d node_down=%d", config.Prom, config.PrometheusListenPort, config.NodeDownMin)
 	}
@@ -52,6 +55,27 @@ chains:
 	}
 	if !chain.Alerts.PagerdutyAlerts || !chain.Alerts.DiscordAlerts || !chain.Alerts.TelegramAlerts || chain.Alerts.ConsecutiveMissed != 4 || len(chain.Nodes) != 1 {
 		t.Fatalf("alert/node compatibility fields not decoded: pagerduty=%v discord=%v telegram=%v consecutive=%d nodes=%d", chain.Alerts.PagerdutyAlerts, chain.Alerts.DiscordAlerts, chain.Alerts.TelegramAlerts, chain.Alerts.ConsecutiveMissed, len(chain.Nodes))
+	}
+}
+
+func TestOptionalListenerHostsDecodeWithoutChangingExistingKeys(t *testing.T) {
+	configured := []byte(`
+enable_dashboard: true
+listen_host: 127.0.0.1
+listen_port: "8888"
+prometheus_enabled: true
+prometheus_listen_host: ::1
+prometheus_listen_port: 28686
+`)
+	var config Config
+	if err := decodeConfig(configured, &config); err != nil {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+	if !config.EnableDash || config.ListenHost != "127.0.0.1" || config.Listen != "8888" {
+		t.Fatalf("dashboard listener fields not decoded: enabled=%v host=%q port=%q", config.EnableDash, config.ListenHost, config.Listen)
+	}
+	if !config.Prom || config.PrometheusListenHost != "::1" || config.PrometheusListenPort != 28686 {
+		t.Fatalf("Prometheus listener fields not decoded: enabled=%v host=%q port=%d", config.Prom, config.PrometheusListenHost, config.PrometheusListenPort)
 	}
 }
 

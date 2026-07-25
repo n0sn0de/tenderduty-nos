@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	dash "github.com/n0sn0de/tenderduty-nos/seer/dashboard"
 )
 
 // nodeRuntimeState is copied while holding the chain's shared durable-state lock.
@@ -121,6 +123,15 @@ func (cc *ChainConfig) publishValidatorInfo(next *ValInfo, retainPrevious bool) 
 func (c *Config) emitStat(ctx context.Context, update *promUpdate) bool {
 	select {
 	case c.statsChan <- update:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (c *Config) emitDashboardUpdate(ctx context.Context, update *dash.ChainStatus) bool {
+	select {
+	case c.updateChan <- update:
 		return true
 	case <-ctx.Done():
 		return false

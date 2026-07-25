@@ -13,11 +13,13 @@ nosnode-seer -example-config
 | Key | Type | Meaning |
 |---|---|---|
 | `enable_dashboard` | bool | Open the dashboard/WebSocket listener. |
+| `listen_host` | string | Optional dashboard bind host or unbracketed IP. Omitted/blank preserves the historical wildcard bind. |
 | `listen_port` | integer/string | Dashboard port; default example `8888`. |
 | `hide_logs` | bool | Hide dashboard logs and some node detail. This is not authentication. |
 | `node_down_alert_minutes` | integer | Delay before node-down alerting. |
 | `node_down_alert_severity` | string | PagerDuty severity for node-down alerts. |
 | `prometheus_enabled` | bool | Open the Prometheus listener. |
+| `prometheus_listen_host` | string | Optional Prometheus bind host or unbracketed IP. Omitted/blank preserves the historical wildcard bind. |
 | `prometheus_listen_port` | integer | Prometheus port; default example `28686`. |
 | `pagerduty`, `discord`, `telegram`, `slack` | object | Global integration gates/default credentials. |
 | `healthcheck` | object | Optional dead-man's-switch ping. |
@@ -67,3 +69,26 @@ Legacy booleans `discord_alerts`, `telegram_alerts`, and `pagerduty_alerts` rema
 4. Chain files override same-name primary `chains` entries.
 
 Unknown YAML fields are currently tolerated for legacy compatibility. Review spelling carefully; strict decoding is a later migration phase.
+
+## Listener bind compatibility and guidance
+
+The host fields are optional and the port fields are unchanged. Seer validates
+all enabled listener addresses before opening either one, constructs explicit
+IPv4/IPv6 endpoints with Go's `net.JoinHostPort` rules, and returns bind failures
+to the process caller. A disabled listener ignores its host/port and opens
+nothing.
+
+| Deployment | Dashboard host | Prometheus host | Result |
+|---|---|---|---|
+| Existing config (host keys omitted/blank) | wildcard | wildcard | Exact historical process bind behavior; secure it with firewall/publishing rules. |
+| Bare metal, local only | `127.0.0.1` or `::1` | `127.0.0.1` or `::1` | Loopback-only process listeners. |
+| Private management interface | explicit interface IP | explicit interface IP | Accept only on that interface; authentication is still external. |
+| Bridged container using `example-docker-compose.yml` | omitted/blank | omitted/blank | Listener remains reachable inside the container while host publishing stays `127.0.0.1`. |
+| Disabled | ignored | ignored | No socket is opened. |
+
+Provide a host only: `127.0.0.1`, `::1`, `localhost`, or a valid hostname. Do
+not include a scheme, brackets, path, zone, or port. In particular, use `::1`,
+not `[::1]`; Seer adds IPv6 brackets safely. Binding the process to loopback
+inside an ordinary bridged container prevents the host's published port from
+reaching it, so keep the process wildcard bind there and constrain the **host**
+side as the checked-in compose example does.

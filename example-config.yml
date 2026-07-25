@@ -3,6 +3,10 @@
 # Existing Tenderduty key names are intentionally preserved for compatibility.
 
 enable_dashboard: true
+# Optional process bind host. Omit or leave blank to preserve the historical
+# wildcard bind. On a bare-metal host, 127.0.0.1 is the safest local-only choice.
+# In a bridged container, keep this omitted and publish the port on host loopback.
+# listen_host: 127.0.0.1
 listen_port: 8888
 # Dashboard logs can reveal node names and errors. Keep hidden on any untrusted network.
 hide_logs: true
@@ -11,6 +15,8 @@ node_down_alert_minutes: 3
 node_down_alert_severity: critical
 
 prometheus_enabled: true
+# Same compatibility and container guidance as listen_host above.
+# prometheus_listen_host: 127.0.0.1
 prometheus_listen_port: 28686
 
 pagerduty:

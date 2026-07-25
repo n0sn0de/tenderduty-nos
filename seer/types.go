@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -27,21 +26,24 @@ const (
 
 // Config holds settings for NosNode Seer monitoring and state information while running.
 type Config struct {
-	alertChan  chan *alertMsg // channel used for outgoing notifications
-	updateChan chan *dash.ChainStatus
-	logChan    chan dash.LogMessage
-	statsChan  chan *promUpdate
-	ctx        context.Context
-	cancel     context.CancelFunc
-	alarms     *alarmCache
-	stateMux   sync.RWMutex
-	ingressMux sync.Mutex
-	ingressWG  sync.WaitGroup
-	accepting  bool
+	alertChan      chan *alertMsg // channel used for outgoing notifications
+	updateChan     chan *dash.ChainStatus
+	logChan        chan dash.LogMessage
+	statsChan      chan *promUpdate
+	ctx            context.Context
+	cancel         context.CancelFunc
+	alarms         *alarmCache
+	stateMux       sync.RWMutex
+	ingressMux     sync.Mutex
+	ingressWG      sync.WaitGroup
+	accepting      bool
+	publicFallback bool
 
 	// EnableDash enables the web dashboard
 	EnableDash bool `yaml:"enable_dashboard"`
-	// Listen is the URL for the dashboard to listen on, must be a valid/parsable URL
+	// ListenHost is the optional dashboard bind host. Empty preserves the wildcard bind.
+	ListenHost string `yaml:"listen_host"`
+	// Listen is the dashboard port retained under its historical YAML key.
 	Listen string `yaml:"listen_port"`
 	// HideLogs controls whether logs are sent to the dashboard. It will also suppress many alarm details.
 	// This is useful if the dashboard will be public.
@@ -55,6 +57,8 @@ type Config struct {
 
 	// Prom controls if the prometheus exporter is enabled.
 	Prom bool `yaml:"prometheus_enabled"`
+	// PrometheusListenHost is the optional Prometheus bind host. Empty preserves the wildcard bind.
+	PrometheusListenHost string `yaml:"prometheus_listen_host"`
 	// PrometheusListenPort is the port number used by the prometheus web server
 	PrometheusListenPort int `yaml:"prometheus_listen_port"`
 
@@ -249,14 +253,9 @@ type HealthcheckConfig struct {
 // validateConfig is a non-exhaustive check for common problems with the configuration. Needs love.
 func validateConfig(c *Config) (fatal bool, problems []string) {
 	problems = make([]string, 0)
-	var err error
-
-	if c.EnableDash {
-		_, err = url.Parse(c.Listen)
-		if err != nil {
-			fatal = true
-			problems = append(problems, fmt.Sprintf("error: The listen URL %s does not appear to be valid", c.Listen))
-		}
+	if _, _, err := listenerAddresses(c); err != nil {
+		fatal = true
+		problems = append(problems, "error: "+err.Error())
 	}
 
 	if c.Pagerduty.Enabled {
@@ -342,9 +341,9 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 		case !v.Alerts.Pagerduty.Enabled && !v.Alerts.Discord.Enabled && !v.Alerts.Telegram.Enabled && !v.Alerts.Slack.Enabled:
 			problems = append(problems, fmt.Sprintf("warn: %20s has no notifications configured", k))
 		}
-		if td.EnableDash {
+		if c.EnableDash {
 			valInfo, _ := v.validatorInfoSnapshot()
-			td.updateChan <- &dash.ChainStatus{
+			c.updateChan <- &dash.ChainStatus{
 				MsgType:      "status",
 				Name:         v.name,
 				ChainId:      v.ChainId,
@@ -362,23 +361,7 @@ func validateConfig(c *Config) (fatal bool, problems []string) {
 		}
 	}
 
-	// if public endpoints are enabled we do our best to keep the list refreshed. Immediate, then every 12 hours.
-	if wantsPublic {
-		go func() {
-			e := refreshRegistry()
-			if e != nil {
-				l("could not fetch chain registry paths, using defaults")
-			}
-			for {
-				time.Sleep(12 * time.Hour)
-				l("refreshing cosmos.registry paths")
-				e = refreshRegistry()
-				if e != nil {
-					l("could not refresh registry paths -", e)
-				}
-			}
-		}()
-	}
+	c.publicFallback = wantsPublic
 	return
 }
 

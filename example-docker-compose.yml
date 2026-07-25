@@ -16,6 +16,8 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
+      # Keep process host keys omitted in config.yml for bridged containers;
+      # these host-side loopback publications provide the local-only boundary.
       - "127.0.0.1:8888:8888"
       - "127.0.0.1:28686:28686"
     volumes:

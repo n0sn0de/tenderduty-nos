@@ -51,11 +51,24 @@ format rather than an opportunistic crypto swap.
 
 ## Phase 3 — runtime hardening
 
-- configurable bind addresses and graceful HTTP shutdown;
+Completed in the first bounded slice:
+
+- optional dashboard `listen_host` and Prometheus `prometheus_listen_host` with
+  omitted wildcard compatibility and safe hostname/IPv4/IPv6 construction;
+- preflight validation and synchronous pre-bind rollback before monitoring
+  starts, with disabled listeners opening nothing;
+- explicit dashboard/Prometheus mux, `http.Server`, listener, worker, and error
+  ownership;
+- shared signal/context cancellation, bounded HTTP shutdown, explicit inbound
+  dashboard WebSocket close, service joins, port-rebind/no-post-shutdown tests,
+  and unchanged notification-drain-before-checkpoint ordering.
+
+Still deferred:
+
 - bounded HTTP clients and unified cancellation;
 - strict config mode with actionable unknown-key migration;
 - dashboard authentication guidance or an opt-in auth boundary;
-- integration contract tests with local fake servers only.
+- wider integration contracts beyond the local real-listener/fake-service tests.
 
 ## Phase 4 — release engineering
 
